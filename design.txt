@@ -1,0 +1,12 @@
+
+while video
+    Read video frame
+    if detect vehicle
+        start tracking
+        while vehicle
+            read video frame
+            if detect lights
+                while lights
+                    calculate distance
+                    display distance
+
