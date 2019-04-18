@@ -111,6 +111,9 @@ def frame_loop(video, net):
     # Process video, frame by frame
     print('Processing', video)
     vc = cv2.VideoCapture(video)
+    fps = vc.get(cv2.CAP_PROP_FPS)
+    print('fps:', fps)
+    wait_ms = int(1000/fps)
     tracked_vehicles = []
     while True:
         res, frame = vc.read()
@@ -125,7 +128,7 @@ def frame_loop(video, net):
         tracked_vehicles[:] = [v for v in tracked_vehicles
                                if tracker_update(frame, v)]
         cv2.imshow("Press 'q' to exit", frame)
-        k = cv2.waitKey(0)
+        k = cv2.waitKey(wait_ms)
         if k == ord('q'):
             break
 
