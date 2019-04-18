@@ -92,19 +92,14 @@ def merge_vehicles(frame, vehicles, tracked_vehicles):
         tracked_vehicles.append(TrackedVehicle(frame, v))
 
 
-def tracker_update(frame, vehicle):
-    (success, box) = vehicle.update(frame)
-    if success:
-        box = vehicle.roi
-        color = (0, 0, 255)
-        cv2.rectangle(frame, (box.top_x, box.top_y),
-                      (box.top_x + box.width, box.top_y + box.height),
-                      color, 2)
-        label = "Distance: {:.2f} m".format(vehicle.calculate_distance())
-        y = box.top_y - 15 if box.top_y - 15 > 15 else box.top_y + 15
-        cv2.putText(frame, label, (box.top_x, y),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 2)
-    return success
+def print_roi(frame, box, label):
+    color = (0, 0, 255)
+    cv2.rectangle(frame, (box.top_x, box.top_y),
+                  (box.top_x + box.width, box.top_y + box.height),
+                  color, 2)
+    y = box.top_y - 15 if box.top_y - 15 > 15 else box.top_y + 15
+    cv2.putText(frame, label, (box.top_x, y),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 2)
 
 
 def frame_loop(video, net):
@@ -115,18 +110,33 @@ def frame_loop(video, net):
     print('fps:', fps)
     wait_ms = int(1000/fps)
     tracked_vehicles = []
+    scale_factor = 2
     while True:
         res, frame = vc.read()
         if res is False:
             break
+
+        # Use a smaller frame to speed up computations
+        frame_small = cv2.resize(frame, (frame.shape[1]//scale_factor,
+                                         frame.shape[0]//scale_factor))
+
         # XXX make confidence configurable?
         if not tracked_vehicles:
             print('Detecting vehicles')
-            vehicles = detect_vehicle(net, 0.2, frame)
-        merge_vehicles(frame, vehicles, tracked_vehicles)
+            vehicles = detect_vehicle(net, 0.2, frame_small)
+        merge_vehicles(frame_small, vehicles, tracked_vehicles)
+
         # Track and show currently detected vehicles
-        tracked_vehicles[:] = [v for v in tracked_vehicles
-                               if tracker_update(frame, v)]
+        still_tracked = []
+        for v in tracked_vehicles:
+            (success, box) = v.update(frame_small)
+            if success:
+                still_tracked.append(v)
+                label = "Distance: {:.2f} m".format(v.calculate_distance())
+                box.scale(scale_factor)
+                print_roi(frame, box, label)
+
+        tracked_vehicles = still_tracked
         cv2.imshow("Press 'q' to exit", frame)
         k = cv2.waitKey(wait_ms)
         if k == ord('q'):

@@ -10,6 +10,12 @@ class BoundingBox:
         self.width = int(width)
         self.height = int(height)
 
+    def scale(self, factor):
+        self.top_x = factor*self.top_x
+        self.top_y = factor*self.top_y
+        self.width = factor*self.width
+        self.height = factor*self.height
+
 
 class TrackedVehicle:
     # Receives a frame and a bounding box with the current vehicle position
@@ -34,9 +40,9 @@ class TrackedVehicle:
             # Slow, jumps, large caffe model
             # self.tracker = cv2.TrackerGOTURN_create()
             # Fastest, does not adapt bounding box, can lose track
-            # self.tracker = cv2.TrackerMOSSE_create()
+            self.tracker = cv2.TrackerMOSSE_create()
             # A bit slow, best tracking, adapts box
-            self.tracker = cv2.TrackerCSRT_create()
+            # self.tracker = cv2.TrackerCSRT_create()
         self.tracker.init(frame, (roi.top_x, roi.top_y, roi.width, roi.height))
         # XXX Constants for the moment
         # Focal length (pix)
