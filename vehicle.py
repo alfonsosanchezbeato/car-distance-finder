@@ -20,7 +20,23 @@ class TrackedVehicle:
         if int(major) == 3 and int(minor) < 3:
             self.tracker = cv2.Tracker_create("KCF")
         else:
-            self.tracker = cv2.TrackerKCF_create()
+            # Best ones for this use case: Median Flow, Mosse, CSRT.
+            # Slow, does not adapt bounding box
+            # self.tracker = cv2.TrackerBoosting_create()
+            # Slow, does not adapt bounding box
+            # self.tracker = cv2.TrackerMIL_create()
+            # Does not adapt bounding box
+            # self.tracker = cv2.TrackerKCF_create()
+            # Jumps between random parts of the image
+            # self.tracker = cv2.TrackerTLD_create()
+            # Fast, good tracking, adapts box, can lose tracking
+            # self.tracker = cv2.TrackerMedianFlow_create()
+            # Slow, jumps, large caffe model
+            # self.tracker = cv2.TrackerGOTURN_create()
+            # Fastest, does not adapt bounding box, can lose track
+            # self.tracker = cv2.TrackerMOSSE_create()
+            # A bit slow, best tracking, adapts box
+            self.tracker = cv2.TrackerCSRT_create()
         self.tracker.init(frame, (roi.top_x, roi.top_y, roi.width, roi.height))
         # XXX Constants for the moment
         # Focal length (pix)
