@@ -41,32 +41,41 @@ VehicleDetector::VehicleDetector(void)
 
 bool VehicleDetector::detectVehicle(const Mat& frame, Rect2d& bbox)
 {
-    // Detect face using Haar Cascade classifier
-    // See http://www.emgu.com/wiki/files/1.5.0.0/Help/html/e2278977-87ea-8fa9-b78e-0e52cfe6406a.htm
-    // for flag description. It might be wortwhile to play a bit with the
-    // different parameters.
-    // vector<Rect> f;
-    // faceCascade.detectMultiScale(frame, f, 1.1, 2, CASCADE_SCALE_IMAGE);
-    // if (f.size() == 0)
-    //     return false;
-
-    // if (debug)
-    //     cout << "Detected " << f.size() << " faces \n";
-
-    // // Get only one face for the moment
-    // bbox = Rect2d(f[0].x, f[0].y, f[0].width, f[0].height);
-
-    // Input image needs to be 300x300 in this network
-    // substract the mean (127.5)
-    Mat blob = dnn::blobFromImage(frame, 1., Size(300,300), 127.5);
+    // We substract 127,5 and apply a scaling factor of 1/127.5 = 0.007843 so
+    // the image values are in the [-1,1] range. Also, the image size must be
+    // 300x300 (this is a requirement for the method input data). This is needed
+    // as the same transformation is applied when training, apparently (see
+    // https://github.com/chuanqi305/MobileNet-SSD/blob/master/template/
+    // MobileNetSSD_train_template.prototxt).
+    Mat resized;
+    cv::resize(frame, resized, Size{300, 300});
+    Mat blob = dnn::blobFromImage(resized, 0.007843, Size{300, 300}, 127.5);
     net_.setInput(blob);
 
     // DetectionOutput layer produces one tensor with seven numbers for each
-    // actual detection. Documentation from caffe:
-    // Each row is a 7 dimension vector, which stores
-    // [image_id, label, confidence, xmin, ymin, xmax, ymax]
+    // actual detection. Documentation from caffe: Each row is a 7 dimension
+    // vector, which stores [image_id, label, confidence, xmin, ymin, xmax,
+    // ymax] The returned matrix is 4 dimensional. The size of the first two is
+    // always one, the size of the third is the number of possibly detected
+    // objects, the four is 7 (the size of DetectionOutput).
+    // The coordinates are in the [0,1] range.
     Mat detections = net_.forward();
-    cout << "detections =\n"  << detections << '\n';
+    cout << "detections size: ";
+    for (int i = 0; i < detections.dims; ++i)
+        cout << detections.size[i] << ' ';
+    cout << '\n';
+    for (int i = 0; i < detections.size[2]; ++i) {
+        double confidence = detections.at<float>(Vec<int, 4>{0, 0, i, 2});
+        if (confidence < 0.2)
+            continue;
+
+        cout << "detected with confidence " << confidence << '\n';
+        for (int j = 0; j < 3; ++j)
+            cout << detections.at<float>(Vec<int, 4>{0, 0, i, j}) << ' ';
+        for (int j = 3; j < 7; ++j)
+            cout << 300*detections.at<float>(Vec<int, 4>{0, 0, i, j}) << ' ';
+        cout << '\n';
+    }
 
     return false;
 }
