@@ -22,6 +22,30 @@ struct VehicleDetector {
     bool detectVehicle(const Mat& frame, Rect2d& bbox);
 
 private:
+    enum ClassLabel {
+        clBackground = 0,
+        clAeroplane,
+        clBicycle,
+        clBird,
+        clBoat,
+        clBottle,
+        clBus,
+        clCar,
+        clCat,
+        clChair,
+        clCow,
+        clDiningtable,
+        clDog,
+        clHorse,
+        clMotorbike,
+        clPerson,
+        clPottedplant,
+        clSheep,
+        clSofa,
+        clTrain,
+        clTvmonitor
+    };
+
     dnn::Net net_;
 };
 
@@ -47,9 +71,7 @@ bool VehicleDetector::detectVehicle(const Mat& frame, Rect2d& bbox)
     // as the same transformation is applied when training, apparently (see
     // https://github.com/chuanqi305/MobileNet-SSD/blob/master/template/
     // MobileNetSSD_train_template.prototxt).
-    Mat resized;
-    cv::resize(frame, resized, Size{300, 300});
-    Mat blob = dnn::blobFromImage(resized, 0.007843, Size{300, 300}, 127.5);
+    Mat blob = dnn::blobFromImage(frame, 0.007843, Size{300, 300}, 127.5);
     net_.setInput(blob);
 
     // DetectionOutput layer produces one tensor with seven numbers for each
@@ -60,21 +82,27 @@ bool VehicleDetector::detectVehicle(const Mat& frame, Rect2d& bbox)
     // objects, the four is 7 (the size of DetectionOutput).
     // The coordinates are in the [0,1] range.
     Mat detections = net_.forward();
-    cout << "detections size: ";
-    for (int i = 0; i < detections.dims; ++i)
-        cout << detections.size[i] << ' ';
-    cout << '\n';
     for (int i = 0; i < detections.size[2]; ++i) {
-        double confidence = detections.at<float>(Vec<int, 4>{0, 0, i, 2});
+        enum ClassLabel label = static_cast<enum ClassLabel>(
+            detections.at<float>(Vec<int, 4>{0, 0, i, 1}));
+        if (   label != clBicycle && label != clBus
+            && label != clCar && label != clMotorbike)
+            continue;
+        float confidence = detections.at<float>(Vec<int, 4>{0, 0, i, 2});
         if (confidence < 0.2)
             continue;
 
-        cout << "detected with confidence " << confidence << '\n';
-        for (int j = 0; j < 3; ++j)
-            cout << detections.at<float>(Vec<int, 4>{0, 0, i, j}) << ' ';
-        for (int j = 3; j < 7; ++j)
-            cout << 300*detections.at<float>(Vec<int, 4>{0, 0, i, j}) << ' ';
-        cout << '\n';
+        cout << "detected " << label << " with confidence " << confidence << '\n';
+
+        bbox.x = frame.size[1]*detections.at<float>(Vec<int, 4>{0, 0, i, 3});
+        bbox.y = frame.size[0]*detections.at<float>(Vec<int, 4>{0, 0, i, 4});
+        double x_max, y_max;
+        x_max = frame.size[1]*detections.at<float>(Vec<int, 4>{0, 0, i, 5});
+        y_max = frame.size[0]*detections.at<float>(Vec<int, 4>{0, 0, i, 6});
+        bbox.width = x_max - bbox.x;
+        bbox.height = y_max - bbox.y;
+        // TODO return more than one detection
+        return true;
     }
 
     return false;
@@ -159,16 +187,14 @@ void TrackThread::threadMethod(void)
                 // the tracked object changes. It looks like a repeated call
                 // to init does not fully clean the state and the
                 // performance of the tracker is greatly affected.
-                tracker = TrackerMedianFlow::create();
+                //tracker = TrackerMedianFlow::create();
+                tracker = TrackerMOSSE::create();
                 tracker->init(frame, bbox);
             }
         }
 
         output.bbox = bbox;
         output.tracking = tracking;
-
-        cout << "Size is " << frame.cols << " x " << frame.rows
-             << " . Tracking: " << tracking << '\n';
     }
 }
 
@@ -193,6 +219,7 @@ void TrackThread::process(const Mat& in, TrackThread::Output& out)
 int main(int argc, char **argv)
 {
     static const char *windowTitle = "Tracking";
+    int wait_ms = 1;
     // Read video from either camera of video file
     VideoCapture video;
     if (argc == 1) {
@@ -204,6 +231,8 @@ int main(int argc, char **argv)
         video.open(videoSrc);
     } else if (argc == 3 && strcmp(argv[1], "-f") == 0) {
         video.open(argv[2]);
+        double fps = video.get(CAP_PROP_FPS);
+        wait_ms = 1000/fps;
     } else {
         cout << "Usage: " << argv[0] << " [<dev_number> | -f <video_file>]\n";
         return 1;
@@ -222,17 +251,24 @@ int main(int argc, char **argv)
     TrackThread tt;
     Mat in;
     TrackThread::Output out;
+    int numFrames = 0, numNotProc = 0;
     while (video.read(in))
     {
         tt.process(in, out);
+        ++numFrames;
 
         if (out.tracking)
             rectangle(in, out.bbox, Scalar(255, 0, 0), 8, 1);
+        else
+            ++numNotProc;
 
         imshow(windowTitle, in);
 
         // Exit if ESC pressed
-        if (waitKey(1) == 27)
+        if (waitKey(wait_ms) == 27)
             break;
     }
+
+    cout << "Did not process " << numNotProc << " frames ("
+         << 100*numNotProc/numFrames << "%)\n";
 }
