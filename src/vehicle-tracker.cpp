@@ -11,6 +11,8 @@
 #include <opencv2/opencv.hpp>
 #include <opencv2/tracking.hpp>
 
+#include "util.h"
+
 using namespace cv;
 using namespace std;
 
@@ -22,29 +24,13 @@ struct VehicleDetector {
     bool detectVehicle(const Mat& frame, Rect2d& bbox);
 
 private:
-    enum ClassLabel {
-        clBackground = 0,
-        clAeroplane,
-        clBicycle,
-        clBird,
-        clBoat,
-        clBottle,
-        clBus,
-        clCar,
-        clCat,
-        clChair,
-        clCow,
-        clDiningtable,
-        clDog,
-        clHorse,
-        clMotorbike,
-        clPerson,
-        clPottedplant,
-        clSheep,
-        clSofa,
-        clTrain,
-        clTvmonitor
-    };
+    ENUM_WITH_STRINGS(ClassLabel,
+                      (clBackground)(clAeroplane)(clBicycle)
+                      (clBird)(clBoat)(clBottle)(clBus)(clCar)
+                      (clCat)(clChair)(clCow)(clDiningtable)
+                      (clDog)(clHorse)(clMotorbike)(clPerson)
+                      (clPottedplant)(clSheep)(clSofa)
+                      (clTrain)(clTvmonitor))
 
     dnn::Net net_;
 };
@@ -92,7 +78,8 @@ bool VehicleDetector::detectVehicle(const Mat& frame, Rect2d& bbox)
         if (confidence < 0.2)
             continue;
 
-        cout << "detected " << label << " with confidence " << confidence << '\n';
+        cout << "detected " << ToString(label) << " with confidence "
+             << confidence << '\n';
 
         bbox.x = frame.size[1]*detections.at<float>(Vec<int, 4>{0, 0, i, 3});
         bbox.y = frame.size[0]*detections.at<float>(Vec<int, 4>{0, 0, i, 4});
