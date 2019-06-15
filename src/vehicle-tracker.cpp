@@ -18,7 +18,8 @@ using namespace std;
 
 // Detects vehicles on video frames
 struct VehicleDetector {
-    VehicleDetector(void);
+    // threshold: [0-1] min confidence to consider something has been detected
+    VehicleDetector(double threshold);
     // If a vehicle is detected in frame, returs true and fills bbox with a
     // square containing it.
     bool detectVehicle(const Mat& frame, Rect2d& bbox);
@@ -32,10 +33,11 @@ private:
                       (clPottedplant)(clSheep)(clSofa)
                       (clTrain)(clTvmonitor))
 
+    double threshold_;
     dnn::Net net_;
 };
 
-VehicleDetector::VehicleDetector(void)
+VehicleDetector::VehicleDetector(double threshold) : threshold_(threshold)
 {
     string pathData;
     const char *snapDir = getenv("SNAP");
@@ -75,7 +77,7 @@ bool VehicleDetector::detectVehicle(const Mat& frame, Rect2d& bbox)
             && label != clCar && label != clMotorbike)
             continue;
         float confidence = detections.at<float>(Vec<int, 4>{0, 0, i, 2});
-        if (confidence < 0.2)
+        if (confidence < threshold_)
             continue;
 
         cout << "detected " << ToString(label) << " with confidence "
@@ -145,7 +147,7 @@ void TrackThread::threadMethod(void)
     bool tracking = false;
     Rect2d bbox;
     Ptr<Tracker> tracker;
-    VehicleDetector detector;
+    VehicleDetector detector(0.2);
 
     while (true) {
         std::unique_lock<mutex> lock(dataMtx);
