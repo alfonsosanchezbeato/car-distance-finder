@@ -1,10 +1,6 @@
 /*
  * Copyright (C) 2019 Alfonso Sanchez-Beato
  */
-#include <mutex>
-#include <thread>
-#include <condition_variable>
-
 #include <opencv2/dnn/dnn.hpp>
 #include <opencv2/core/ocl.hpp>
 #include <opencv2/highgui.hpp>
@@ -12,6 +8,7 @@
 #include <opencv2/tracking.hpp>
 
 #include "util.h"
+#include "mono-processor.hpp"
 
 using namespace cv;
 using namespace std;
@@ -97,112 +94,72 @@ bool VehicleDetector::detectVehicle(const Mat& frame, Rect2d& bbox)
     return false;
 }
 
-// Detects and tracks vehicles in video data, using a separate thread
-struct TrackThread {
-    TrackThread(void);
-    ~TrackThread(void);
-
-    struct Output {
-        Rect2d bbox;
-        bool tracking{false};
-    };
-
-    // If the tracking thread is busy, it does nothing. Otherwise, it pushes a
-    // new frame to the thread and refreshes "out" with the new tracking data
-    // (saying if we are tracking something and the bounding box in the frame if
-    // that is the case).
-    void process(const Mat& in, Output& out);
-
-private:
-    mutex dataMtx;
-    condition_variable frameCondition;
-    Mat frame;
-    Output output;
-    bool finish;
-    // Keep this last as it uses the other members
-    thread processThread;
-
-    void threadMethod(void);
+struct TrackingState {
+    Rect2d bbox;
+    bool tracking{false};
 };
 
-TrackThread::TrackThread(void) :
-    finish{false},
-    processThread{&TrackThread::threadMethod, this}
+// Detects and tracks vehicles in video data, using a separate thread
+struct TrackThread : MonoProcessor<Mat, TrackingState> {
+    TrackThread(void);
+    ~TrackThread(void) {}
+
+private:
+    Mat frame_;
+    bool tracking_{false};
+    Rect2d bbox_;
+    Ptr<Tracker> tracker_;
+    VehicleDetector detector_;
+
+    void setNextGetLast(const Mat& in, TrackingState& out);
+    void update(void);
+};
+
+TrackThread::TrackThread(void) : detector_(0.2)
 {
 }
 
-TrackThread::~TrackThread(void)
+void TrackThread::update(void)
 {
-    {
-        std::unique_lock<mutex> lock(dataMtx);
-        finish = true;
-        frameCondition.notify_one();
-    }
+    if (tracking_)
+        tracking_ = tracker_->update(frame_, bbox_);
 
-    processThread.join();
-}
+    if (!tracking_) {
+        tracking_ = detector_.detectVehicle(frame_, bbox_);
+        if (tracking_) {
+            // We have different options for the tracker:
+            // TrackerBoosting: slow, does not adapt bounding box
+            // TrackerMIL: slow, does not adapt bounding box
+            // TrackerKCF: does not adapt bounding box
+            // TrackerTLD: jumps between random parts of the image
+            // TrackerMedianFlow: fast, good tracking, adapts box, can lose tracking
+            // TrackerGOTURN: slow, jumps, large caffe model
+            // TrackerMOSSE: fastest, does not adapt bounding box, can lose tracking
+            // TrackerCSRT: a bit slow, best tracking, adapts box
 
-void TrackThread::threadMethod(void)
-{
-    bool tracking = false;
-    Rect2d bbox;
-    Ptr<Tracker> tracker;
-    VehicleDetector detector(0.2);
-
-    while (true) {
-        std::unique_lock<mutex> lock(dataMtx);
-        frameCondition.wait(lock);
-
-        if (finish)
-            break;
-
-        if (tracking)
-            tracking = tracker->update(frame, bbox);
-
-        if (!tracking) {
-            tracking = detector.detectVehicle(frame, bbox);
-            if (tracking) {
-                // We have different options for the tracker:
-                // TrackerBoosting: slow, does not adapt bounding box
-                // TrackerMIL: slow, does not adapt bounding box
-                // TrackerKCF: does not adapt bounding box
-                // TrackerTLD: jumps between random parts of the image
-                // TrackerMedianFlow: fast, good tracking, adapts box, can lose tracking
-                // TrackerGOTURN: slow, jumps, large caffe model
-                // TrackerMOSSE: fastest, does not adapt bounding box, can lose tracking
-                // TrackerCSRT: a bit slow, best tracking, adapts box
-
-                // At least for KFC, we need to re-create the tracker when
-                // the tracked object changes. It looks like a repeated call
-                // to init does not fully clean the state and the
-                // performance of the tracker is greatly affected.
-                //tracker = TrackerMedianFlow::create();
-                tracker = TrackerMOSSE::create();
-                tracker->init(frame, bbox);
-            }
+            // At least for KFC, we need to re-create the tracker when
+            // the tracked object changes. It looks like a repeated call
+            // to init does not fully clean the state and the
+            // performance of the tracker is greatly affected.
+            //tracker = TrackerMedianFlow::create();
+            tracker_ = TrackerMOSSE::create();
+            tracker_->init(frame_, bbox_);
         }
-
-        output.bbox = bbox;
-        output.tracking = tracking;
     }
 }
 
-void TrackThread::process(const Mat& in, TrackThread::Output& out)
+void TrackThread::setNextGetLast(const Mat& in, TrackingState& out)
 {
     static const double scale_f = 2.;
 
-    std::unique_lock<mutex> lock(dataMtx, defer_lock_t());
-    if (lock.try_lock()) {
-        // Take latest track result
-        out.tracking = output.tracking;
-        out.bbox = Rect2d(scale_f*output.bbox.x,
-                          scale_f*output.bbox.y,
-                          scale_f*output.bbox.width,
-                          scale_f*output.bbox.height);
-        // Makes a copy to the shared frame
-        resize(in, frame, Size(), 1/scale_f, 1/scale_f);
-        frameCondition.notify_one();
-    }
+    // Take latest track result
+    out.tracking = tracking_;
+    out.bbox = Rect2d(scale_f*bbox_.x,
+                      scale_f*bbox_.y,
+                      scale_f*bbox_.width,
+                      scale_f*bbox_.height);
+    // Makes a copy to the shared frame
+    resize(in, frame_, Size(), 1/scale_f, 1/scale_f);
 }
 
 int main(int argc, char **argv)
@@ -239,7 +196,7 @@ int main(int argc, char **argv)
 
     TrackThread tt;
     Mat in;
-    TrackThread::Output out;
+    TrackingState out;
     int numFrames = 0, numNotProc = 0;
     while (video.read(in))
     {
