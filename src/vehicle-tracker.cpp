@@ -13,6 +13,14 @@
 using namespace cv;
 using namespace std;
 
+    // struct Detection {
+    //     Rect2d bbox;
+    //     const char *description;
+    // }
+    // struct Output {
+    //     vector<Detection> detects;
+    // };
+
 // Detects vehicles on video frames
 struct VehicleDetector {
     // threshold: [0-1] min confidence to consider something has been detected
@@ -111,15 +119,15 @@ private:
     Ptr<Tracker> tracker_;
     VehicleDetector detector_;
 
-    void setNextGetLast(const Mat& in, TrackingState& out);
-    void update(void);
+    void transactSafe(const Mat& in, TrackingState& out);
+    void process(void);
 };
 
 TrackThread::TrackThread(void) : detector_(0.2)
 {
 }
 
-void TrackThread::update(void)
+void TrackThread::process(void)
 {
     if (tracking_)
         tracking_ = tracker_->update(frame_, bbox_);
@@ -148,7 +156,7 @@ void TrackThread::update(void)
     }
 }
 
-void TrackThread::setNextGetLast(const Mat& in, TrackingState& out)
+void TrackThread::transactSafe(const Mat& in, TrackingState& out)
 {
     static const double scale_f = 2.;
 
@@ -200,13 +208,12 @@ int main(int argc, char **argv)
     int numFrames = 0, numNotProc = 0;
     while (video.read(in))
     {
-        tt.process(in, out);
         ++numFrames;
+        if (tt.transact(in, out) == false)
+            ++numNotProc;
 
         if (out.tracking)
             rectangle(in, out.bbox, Scalar(255, 0, 0), 8, 1);
-        else
-            ++numNotProc;
 
         imshow(windowTitle, in);
 
