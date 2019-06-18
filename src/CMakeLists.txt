@@ -8,7 +8,9 @@ add_definitions(-Wall -Wextra -g)
 add_executable(vehicletracker ${SOURCES} ${HEADERS})
 target_link_libraries(vehicletracker ${OpenCV_LIBS} ${CMAKE_THREAD_LIBS_INIT})
 
-find_package(Boost REQUIRED)
+# Needed for boost log lib. Another option would be -DBOOST_LOG_DYN_LINK.
+set(Boost_USE_STATIC_LIBS ON)
+find_package(Boost REQUIRED COMPONENTS log)
 include_directories(${Boost_INCLUDE_DIRS})
 target_link_libraries(vehicletracker ${Boost_LIBRARIES})
 

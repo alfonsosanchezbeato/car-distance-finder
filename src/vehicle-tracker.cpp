@@ -1,6 +1,9 @@
 /*
  * Copyright (C) 2019 Alfonso Sanchez-Beato
  */
+#include <boost/log/trivial.hpp>
+#include <boost/log/expressions.hpp>
+
 #include <opencv2/dnn/dnn.hpp>
 #include <opencv2/core/ocl.hpp>
 #include <opencv2/highgui.hpp>
@@ -85,8 +88,8 @@ bool VehicleDetector::detectVehicle(const Mat& frame, Rect2d& bbox)
         if (confidence < threshold_)
             continue;
 
-        cout << "detected " << ToString(label) << " with confidence "
-             << confidence << '\n';
+        BOOST_LOG_TRIVIAL(debug) << "detected " << ToString(label)
+                                 << " with confidence " << confidence;
 
         bbox.x = frame.size[1]*detections.at<float>(Vec<int, 4>{0, 0, i, 3});
         bbox.y = frame.size[0]*detections.at<float>(Vec<int, 4>{0, 0, i, 4});
@@ -174,6 +177,11 @@ int main(int argc, char **argv)
 {
     static const char *windowTitle = "Tracking";
     int wait_ms = 1;
+
+    // Set logging priority
+    boost::log::core::get()->set_filter(
+        boost::log::trivial::severity >= boost::log::trivial::debug);
+
     // Read video from either camera of video file
     VideoCapture video;
     if (argc == 1) {
@@ -222,6 +230,6 @@ int main(int argc, char **argv)
             break;
     }
 
-    cout << "Did not process " << numNotProc << " frames ("
-         << 100*numNotProc/numFrames << "%)\n";
+    BOOST_LOG_TRIVIAL(debug) << "Did not process " << numNotProc << " frames ("
+                             << 100*numNotProc/numFrames << "%)";
 }
