@@ -1,6 +1,8 @@
 /*
  * Copyright (C) 2019 Alfonso Sanchez-Beato
  */
+#include <vector>
+
 #include <boost/log/trivial.hpp>
 #include <boost/log/expressions.hpp>
 
@@ -16,21 +18,15 @@
 using namespace cv;
 using namespace std;
 
-    // struct Detection {
-    //     Rect2d bbox;
-    //     const char *description;
-    // }
-    // struct Output {
-    //     vector<Detection> detects;
-    // };
+struct DetectedObject {
+    Rect2d bbox;
+    const char *description;
+};
 
 // Detects vehicles on video frames
-struct VehicleDetector {
+struct VehicleDetector : MonoProcessor<Mat, vector<DetectedObject>> {
     // threshold: [0-1] min confidence to consider something has been detected
     VehicleDetector(double threshold);
-    // If a vehicle is detected in frame, returs true and fills bbox with a
-    // square containing it.
-    bool detectVehicle(const Mat& frame, Rect2d& bbox);
 
 private:
     ENUM_WITH_STRINGS(ClassLabel,
@@ -43,6 +39,12 @@ private:
 
     double threshold_;
     dnn::Net net_;
+    Mat frameBlob_;
+    int frameWidth_, frameHeight_;
+    vector<DetectedObject> detected_;
+
+    void transactSafe(const Mat& in, vector<DetectedObject>& out);
+    void process(void);
 };
 
 VehicleDetector::VehicleDetector(double threshold) : threshold_(threshold)
@@ -59,7 +61,7 @@ VehicleDetector::VehicleDetector(double threshold) : threshold_(threshold)
                                  pathData + "MobileNetSSD_deploy.caffemodel");
 }
 
-bool VehicleDetector::detectVehicle(const Mat& frame, Rect2d& bbox)
+void VehicleDetector::transactSafe(const Mat& in, vector<DetectedObject>& out)
 {
     // We substract 127,5 and apply a scaling factor of 1/127.5 = 0.007843 so
     // the image values are in the [-1,1] range. Also, the image size must be
@@ -67,8 +69,16 @@ bool VehicleDetector::detectVehicle(const Mat& frame, Rect2d& bbox)
     // as the same transformation is applied when training, apparently (see
     // https://github.com/chuanqi305/MobileNet-SSD/blob/master/template/
     // MobileNetSSD_train_template.prototxt).
-    Mat blob = dnn::blobFromImage(frame, 0.007843, Size{300, 300}, 127.5);
-    net_.setInput(blob);
+    frameBlob_ = dnn::blobFromImage(in, 0.007843, Size{300, 300}, 127.5);
+    frameWidth_ = in.size[1];
+    frameHeight_ = in.size[0];
+
+    out = detected_;
+}
+
+void VehicleDetector::process(void)
+{
+    net_.setInput(frameBlob_);
 
     // DetectionOutput layer produces one tensor with seven numbers for each
     // actual detection. Documentation from caffe: Each row is a 7 dimension
@@ -88,21 +98,20 @@ bool VehicleDetector::detectVehicle(const Mat& frame, Rect2d& bbox)
         if (confidence < threshold_)
             continue;
 
-        BOOST_LOG_TRIVIAL(debug) << "detected " << ToString(label)
+        BOOST_LOG_TRIVIAL(debug) << "detected " << ClassLabelStr(label)
                                  << " with confidence " << confidence;
 
-        bbox.x = frame.size[1]*detections.at<float>(Vec<int, 4>{0, 0, i, 3});
-        bbox.y = frame.size[0]*detections.at<float>(Vec<int, 4>{0, 0, i, 4});
+        Rect2d bbox;
+        bbox.x = frameWidth_*detections.at<float>(Vec<int, 4>{0, 0, i, 3});
+        bbox.y = frameHeight_*detections.at<float>(Vec<int, 4>{0, 0, i, 4});
         double x_max, y_max;
-        x_max = frame.size[1]*detections.at<float>(Vec<int, 4>{0, 0, i, 5});
-        y_max = frame.size[0]*detections.at<float>(Vec<int, 4>{0, 0, i, 6});
+        x_max = frameWidth_*detections.at<float>(Vec<int, 4>{0, 0, i, 5});
+        y_max = frameHeight_*detections.at<float>(Vec<int, 4>{0, 0, i, 6});
         bbox.width = x_max - bbox.x;
         bbox.height = y_max - bbox.y;
-        // TODO return more than one detection
-        return true;
-    }
 
-    return false;
+        detected_.push_back(DetectedObject{bbox, ClassLabelStr(label)});
+    }
 }
 
 struct TrackingState {
