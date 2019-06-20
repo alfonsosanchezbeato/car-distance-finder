@@ -8,7 +8,7 @@
         BOOST_PP_SEQ_ENUM(enumerators)                                        \
     };                                                                        \
                                                                               \
-    inline static const char* ToString(name v)                                \
+    inline static const char* name##Str(name v)                               \
     {                                                                         \
         switch (v)                                                            \
         {                                                                     \
