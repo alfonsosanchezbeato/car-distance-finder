@@ -1,6 +1,7 @@
 /*
  * Copyright (C) 2019 Alfonso Sanchez-Beato
  */
+#include <memory>
 #include <vector>
 
 #include <boost/log/trivial.hpp>
@@ -15,6 +16,8 @@
 #include "util.h"
 #include "mono-processor.hpp"
 
+static const double detect_thresold_g = 0.5;
+
 using namespace cv;
 using namespace std;
 
@@ -27,6 +30,7 @@ struct DetectedObject {
 struct VehicleDetector : MonoProcessor<Mat, vector<DetectedObject>> {
     // threshold: [0-1] min confidence to consider something has been detected
     VehicleDetector(double threshold);
+    ~VehicleDetector() { stop(); }
 
 private:
     ENUM_WITH_STRINGS(ClassLabel,
@@ -88,6 +92,7 @@ void VehicleDetector::process(void)
     // objects, the four is 7 (the size of DetectionOutput).
     // The coordinates are in the [0,1] range.
     Mat detections = net_.forward();
+    vector<DetectedObject> detected;
     for (int i = 0; i < detections.size[2]; ++i) {
         enum ClassLabel label = static_cast<enum ClassLabel>(
             detections.at<float>(Vec<int, 4>{0, 0, i, 1}));
@@ -110,8 +115,10 @@ void VehicleDetector::process(void)
         bbox.width = x_max - bbox.x;
         bbox.height = y_max - bbox.y;
 
-        detected_.push_back(DetectedObject{bbox, ClassLabelStr(label)});
+        detected.push_back(DetectedObject{bbox, ClassLabelStr(label)});
     }
+
+    detected_ = detected;
 }
 
 struct TrackingState {
@@ -121,22 +128,40 @@ struct TrackingState {
 
 // Detects and tracks vehicles in video data, using a separate thread
 struct TrackThread : MonoProcessor<Mat, TrackingState> {
-    TrackThread(void);
-    ~TrackThread(void) {}
+    TrackThread(const Mat& frame, const Rect2d& bbox);
+    ~TrackThread(void) { stop(); }
 
 private:
     Mat frame_;
-    bool tracking_{false};
+    bool tracking_;
     Rect2d bbox_;
     Ptr<Tracker> tracker_;
-    VehicleDetector detector_;
 
     void transactSafe(const Mat& in, TrackingState& out);
     void process(void);
 };
 
-TrackThread::TrackThread(void) : detector_(0.2)
+TrackThread::TrackThread(const Mat& frame, const Rect2d& bbox) :
+    tracking_{true},
+    bbox_{bbox}
 {
+    // We have different options for the tracker:
+    // TrackerBoosting: slow, does not adapt bounding box
+    // TrackerMIL: slow, does not adapt bounding box
+    // TrackerKCF: does not adapt bounding box
+    // TrackerTLD: jumps between random parts of the image
+    // TrackerMedianFlow: fast, good tracking, adapts box, can lose tracking
+    // TrackerGOTURN: slow, jumps, large caffe model
+    // TrackerMOSSE: fastest, does not adapt bounding box, can lose tracking
+    // TrackerCSRT: a bit slow, best tracking, adapts box
+
+    // At least for KFC, we need to re-create the tracker when
+    // the tracked object changes. It looks like a repeated call
+    // to init does not fully clean the state and the
+    // performance of the tracker is greatly affected.
+    //tracker_ = TrackerMedianFlow::create();
+    tracker_ = TrackerMOSSE::create();
+    tracker_->init(frame, bbox);
 }
 
 void TrackThread::process(void)
@@ -144,42 +169,27 @@ void TrackThread::process(void)
     if (tracking_)
         tracking_ = tracker_->update(frame_, bbox_);
 
-    if (!tracking_) {
-        tracking_ = detector_.detectVehicle(frame_, bbox_);
-        if (tracking_) {
-            // We have different options for the tracker:
-            // TrackerBoosting: slow, does not adapt bounding box
-            // TrackerMIL: slow, does not adapt bounding box
-            // TrackerKCF: does not adapt bounding box
-            // TrackerTLD: jumps between random parts of the image
-            // TrackerMedianFlow: fast, good tracking, adapts box, can lose tracking
-            // TrackerGOTURN: slow, jumps, large caffe model
-            // TrackerMOSSE: fastest, does not adapt bounding box, can lose tracking
-            // TrackerCSRT: a bit slow, best tracking, adapts box
-
-            // At least for KFC, we need to re-create the tracker when
-            // the tracked object changes. It looks like a repeated call
-            // to init does not fully clean the state and the
-            // performance of the tracker is greatly affected.
-            //tracker = TrackerMedianFlow::create();
-            tracker_ = TrackerMOSSE::create();
-            tracker_->init(frame_, bbox_);
-        }
-    }
+    if (!tracking_)
+        BOOST_LOG_TRIVIAL(debug) << "Tracking lost";
 }
 
 void TrackThread::transactSafe(const Mat& in, TrackingState& out)
 {
-    static const double scale_f = 2.;
-
-    // Take latest track result
     out.tracking = tracking_;
-    out.bbox = Rect2d(scale_f*bbox_.x,
-                      scale_f*bbox_.y,
-                      scale_f*bbox_.width,
-                      scale_f*bbox_.height);
-    // Makes a copy to the shared frame
-    resize(in, frame_, Size(), 1/scale_f, 1/scale_f);
+    out.bbox = bbox_;
+    // TODO make this more efficient
+    in.copyTo(frame_);
+
+    // static const double scale_f = 2.;
+
+    // // Take latest track result
+    // out.tracking = tracking_;
+    // out.bbox = Rect2d(scale_f*bbox_.x,
+    //                   scale_f*bbox_.y,
+    //                   scale_f*bbox_.width,
+    //                   scale_f*bbox_.height);
+    // // Makes a copy to the shared frame
+    // resize(in, frame_, Size(), 1/scale_f, 1/scale_f);
 }
 
 int main(int argc, char **argv)
@@ -219,15 +229,28 @@ int main(int argc, char **argv)
     //resizeWindow(windowTitle, 960, 720);
     //setWindowProperty(windowTitle, WND_PROP_FULLSCREEN, WINDOW_FULLSCREEN);
 
-    TrackThread tt;
+    VehicleDetector detect{detect_thresold_g};
+    unique_ptr<TrackThread> tt;
     Mat in;
     TrackingState out;
-    int numFrames = 0, numNotProc = 0;
+    int numFrames = 0, numNotProcDetect = 0, numNotProcTrack = 0;
+
     while (video.read(in))
     {
         ++numFrames;
-        if (tt.transact(in, out) == false)
-            ++numNotProc;
+
+        vector<DetectedObject> detected;
+        // TODO Continuous processing for the moment
+        if (!detect.transact(in, detected))
+            ++numNotProcDetect;
+        if (!out.tracking && detected.size() > 0) {
+            out.tracking = true;
+            out.bbox = detected[0].bbox;
+            tt = make_unique<TrackThread>(in, out.bbox);
+        }
+
+        if (tt && !tt->transact(in, out))
+            ++numNotProcTrack;
 
         if (out.tracking)
             rectangle(in, out.bbox, Scalar(255, 0, 0), 8, 1);
@@ -239,6 +262,10 @@ int main(int argc, char **argv)
             break;
     }
 
-    BOOST_LOG_TRIVIAL(debug) << "Did not process " << numNotProc << " frames ("
-                             << 100*numNotProc/numFrames << "%)";
+    BOOST_LOG_TRIVIAL(debug) << "Detection: " << numNotProcDetect << " frames ("
+                             << 100*numNotProcDetect/numFrames
+                             << "%) not processed";
+    BOOST_LOG_TRIVIAL(debug) << "Tracking: " << numNotProcTrack << " frames ("
+                             << 100*numNotProcTrack/numFrames
+                             << "%) not processed";
 }

@@ -28,6 +28,12 @@ protected:
     // inside mutex context
     virtual void process(void) = 0;
 
+    // Make sure to stop the thread from the child destructor, we cannot do
+    // that safely from the parent destructor as at that point the child objects
+    // will have been already destroyed, which is an issue if they were being
+    // used by the thread.
+    void stop(void);
+
 private:
     std::mutex dataMtx_;
     std::condition_variable dataCond_;
@@ -47,6 +53,11 @@ MonoProcessor<In, Out>::MonoProcessor(void) :
 
 template <typename In, typename Out>
 MonoProcessor<In, Out>::~MonoProcessor(void)
+{
+}
+
+template <typename In, typename Out>
+void MonoProcessor<In, Out>::stop(void)
 {
     {
         std::unique_lock<std::mutex> lock(dataMtx_);
