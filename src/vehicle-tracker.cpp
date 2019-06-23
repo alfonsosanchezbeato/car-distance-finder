@@ -192,9 +192,59 @@ void TrackThread::transactSafe(const Mat& in, TrackingState& out)
     // resize(in, frame_, Size(), 1/scale_f, 1/scale_f);
 }
 
-int main(int argc, char **argv)
+void processStream(VideoCapture& video, int wait_ms)
 {
     static const char *windowTitle = "Tracking";
+    VehicleDetector detect{detect_thresold_g};
+    unique_ptr<TrackThread> tt;
+    Mat in;
+    TrackingState out;
+    int numFrames = 0, numNotProcDetect = 0, numNotProcTrack = 0;
+
+    namedWindow(windowTitle, WINDOW_NORMAL);
+    //moveWindow(windowTitle, 0, 0);
+    //resizeWindow(windowTitle, 960, 720);
+    //setWindowProperty(windowTitle, WND_PROP_FULLSCREEN, WINDOW_FULLSCREEN);
+
+    while (video.read(in))
+    {
+        ++numFrames;
+
+        vector<DetectedObject> detected;
+        // TODO Continuous processing for the moment
+        if (!detect.transact(in, detected))
+            ++numNotProcDetect;
+        if (!out.tracking && detected.size() > 0) {
+            out.tracking = true;
+            out.bbox = detected[0].bbox;
+            tt = make_unique<TrackThread>(in, out.bbox);
+        }
+        for (auto& res : detected)
+            rectangle(in, res.bbox, Scalar(0, 255, 0), 8, 1);
+
+        if (tt && !tt->transact(in, out))
+            ++numNotProcTrack;
+
+        if (out.tracking)
+            rectangle(in, out.bbox, Scalar(255, 0, 0), 8, 1);
+
+        imshow(windowTitle, in);
+
+        // Exit if ESC pressed
+        if (waitKey(wait_ms) == 27)
+            break;
+    }
+
+    BOOST_LOG_TRIVIAL(debug) << "Detection: " << numNotProcDetect << " frames ("
+                             << 100*numNotProcDetect/numFrames
+                             << "%) not processed";
+    BOOST_LOG_TRIVIAL(debug) << "Tracking: " << numNotProcTrack << " frames ("
+                             << 100*numNotProcTrack/numFrames
+                             << "%) not processed";
+}
+
+int main(int argc, char **argv)
+{
     int wait_ms = 1;
 
     // Set logging priority
@@ -224,48 +274,6 @@ int main(int argc, char **argv)
         return 1;
     }
 
-    namedWindow(windowTitle, WINDOW_NORMAL);
-    //moveWindow(windowTitle, 0, 0);
-    //resizeWindow(windowTitle, 960, 720);
-    //setWindowProperty(windowTitle, WND_PROP_FULLSCREEN, WINDOW_FULLSCREEN);
-
-    VehicleDetector detect{detect_thresold_g};
-    unique_ptr<TrackThread> tt;
-    Mat in;
-    TrackingState out;
-    int numFrames = 0, numNotProcDetect = 0, numNotProcTrack = 0;
-
-    while (video.read(in))
-    {
-        ++numFrames;
-
-        vector<DetectedObject> detected;
-        // TODO Continuous processing for the moment
-        if (!detect.transact(in, detected))
-            ++numNotProcDetect;
-        if (!out.tracking && detected.size() > 0) {
-            out.tracking = true;
-            out.bbox = detected[0].bbox;
-            tt = make_unique<TrackThread>(in, out.bbox);
-        }
-
-        if (tt && !tt->transact(in, out))
-            ++numNotProcTrack;
-
-        if (out.tracking)
-            rectangle(in, out.bbox, Scalar(255, 0, 0), 8, 1);
-
-        imshow(windowTitle, in);
-
-        // Exit if ESC pressed
-        if (waitKey(wait_ms) == 27)
-            break;
-    }
-
-    BOOST_LOG_TRIVIAL(debug) << "Detection: " << numNotProcDetect << " frames ("
-                             << 100*numNotProcDetect/numFrames
-                             << "%) not processed";
-    BOOST_LOG_TRIVIAL(debug) << "Tracking: " << numNotProcTrack << " frames ("
-                             << 100*numNotProcTrack/numFrames
-                             << "%) not processed";
+    processStream(video, wait_ms);
+    return 0;
 }
