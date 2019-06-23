@@ -4,7 +4,7 @@ find_package(Threads REQUIRED)
 set(SOURCES vehicle-tracker.cpp)
 
 include_directories(${OpenCV_INCLUDE_DIRS})
-add_definitions(-Wall -Wextra -g)
+add_definitions(-Wall -Wextra -pedantic -Werror -g)
 add_executable(vehicletracker ${SOURCES} ${HEADERS})
 target_link_libraries(vehicletracker ${OpenCV_LIBS} ${CMAKE_THREAD_LIBS_INIT})
 
