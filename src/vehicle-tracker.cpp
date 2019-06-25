@@ -1,6 +1,7 @@
 /*
  * Copyright (C) 2019 Alfonso Sanchez-Beato
  */
+#include <list>
 #include <memory>
 #include <vector>
 
@@ -17,6 +18,7 @@
 #include "mono-processor.hpp"
 
 static const double detect_thresold_g = 0.5;
+static const double allowed_overlap_g = 0.3;
 
 using namespace cv;
 using namespace std;
@@ -160,7 +162,8 @@ TrackThread::TrackThread(const Mat& frame, const Rect2d& bbox) :
     // to init does not fully clean the state and the
     // performance of the tracker is greatly affected.
     //tracker_ = TrackerMedianFlow::create();
-    tracker_ = TrackerMOSSE::create();
+    //tracker_ = TrackerMOSSE::create();
+    tracker_ = TrackerCSRT::create();
     tracker_->init(frame, bbox);
 }
 
@@ -177,7 +180,7 @@ void TrackThread::transactSafe(const Mat& in, TrackingState& out)
 {
     out.tracking = tracking_;
     out.bbox = bbox_;
-    // TODO make this more efficient
+    // TODO make this more efficient by scaling
     in.copyTo(frame_);
 
     // static const double scale_f = 2.;
@@ -192,13 +195,69 @@ void TrackThread::transactSafe(const Mat& in, TrackingState& out)
     // resize(in, frame_, Size(), 1/scale_f, 1/scale_f);
 }
 
+struct TrackedObject {
+    TrackingState state;
+    unique_ptr<TrackThread> tt;
+};
+
+// Returns the overlap between two segments, a1a2 and b1b2. It assumes that
+// a1 < a2 and b1 < b2.
+inline double segmentOverlap(double a1, double a2, double b1, double b2)
+{
+    if (a1 <= b1 && a2 > b1) {
+        if (a2 <= b2)
+            return a2 - b1;
+        else
+            return b2 - b1;
+    } else if (a1 >= b1 && a1 < b2) {
+        if (a2 <= b2)
+            return a2 - a1;
+        else
+            return b2 - a1;
+    }
+
+    return 0.;
+}
+
+bool squareOverlap(const Rect2d& a, const Rect2d& b)
+{
+    double overlap =
+        segmentOverlap(a.x, a.x + a.width, b.x, b.x + b.width)*
+        segmentOverlap(a.y, a.y + a.height, b.y, b.y + b.height);
+    if (   overlap/(a.width*a.height) > allowed_overlap_g
+        || overlap/(b.width*b.height) > allowed_overlap_g)
+        return true;
+
+    return false;
+}
+
+void mergeTrackedObjects(const Mat& frame,
+                         const vector<DetectedObject>& detected,
+                         list<TrackedObject>& tracked)
+{
+    list<TrackedObject> newTracked;
+    for (const auto& detect : detected) {
+        bool overlaps = false;
+        for (const auto& track : tracked) {
+            if (squareOverlap(detect.bbox, track.state.bbox)) {
+                overlaps = true;
+                break;
+            }
+        }
+        if (overlaps == false)
+            newTracked.push_back(TrackedObject{{detect.bbox, true},
+                        make_unique<TrackThread>(frame, detect.bbox)});
+    }
+
+    tracked.splice(tracked.end(), newTracked);
+}
+
 void processStream(VideoCapture& video, int wait_ms)
 {
     static const char *windowTitle = "Tracking";
     VehicleDetector detect{detect_thresold_g};
-    unique_ptr<TrackThread> tt;
+    list<TrackedObject> tracked;
     Mat in;
-    TrackingState out;
     int numFrames = 0, numNotProcDetect = 0, numNotProcTrack = 0;
 
     namedWindow(windowTitle, WINDOW_NORMAL);
@@ -210,23 +269,25 @@ void processStream(VideoCapture& video, int wait_ms)
     {
         ++numFrames;
 
+        // TODO Continuous detection for the moment
         vector<DetectedObject> detected;
-        // TODO Continuous processing for the moment
         if (!detect.transact(in, detected))
             ++numNotProcDetect;
-        if (!out.tracking && detected.size() > 0) {
-            out.tracking = true;
-            out.bbox = detected[0].bbox;
-            tt = make_unique<TrackThread>(in, out.bbox);
-        }
         for (auto& res : detected)
             rectangle(in, res.bbox, Scalar(0, 255, 0), 8, 1);
+        if (detected.size() > 0) {
+            mergeTrackedObjects(in, detected, tracked);
+        }
 
-        if (tt && !tt->transact(in, out))
-            ++numNotProcTrack;
-
-        if (out.tracking)
-            rectangle(in, out.bbox, Scalar(255, 0, 0), 8, 1);
+        for (auto tr = tracked.begin(), trEnd = tracked.end(); tr != trEnd; ) {
+            tr->tt->transact(in, tr->state);
+            if (tr->state.tracking) {
+                rectangle(in, tr->state.bbox, Scalar(255, 0, 0), 8, 1);
+                ++tr;
+            } else {
+                tr = tracked.erase(tr);
+            }
+        }
 
         imshow(windowTitle, in);
 
