@@ -19,9 +19,12 @@
 
 static const double detect_thresold_g = 0.5;
 static const double allowed_overlap_g = 0.3;
+static const float min_similarity_hist_g = 0.5;
 
 using namespace cv;
 using namespace std;
+
+inline double segmentOverlap(double a1, double a2, double b1, double b2);
 
 struct DetectedObject {
     Rect2d bbox;
@@ -138,14 +141,17 @@ private:
     bool tracking_;
     Rect2d bbox_;
     Ptr<Tracker> tracker_;
+    Mat firstHist_;
 
     void transactSafe(const Mat& in, TrackingState& out);
     void process(void);
+    Mat calcNormalizedHist3d(const Mat& frame, const Rect2d& bbox);
 };
 
 TrackThread::TrackThread(const Mat& frame, const Rect2d& bbox) :
     tracking_{true},
-    bbox_{bbox}
+    bbox_{bbox},
+    firstHist_{calcNormalizedHist3d(frame, bbox)}
 {
     // We have different options for the tracker:
     // TrackerBoosting: slow, does not adapt bounding box
@@ -167,10 +173,70 @@ TrackThread::TrackThread(const Mat& frame, const Rect2d& bbox) :
     tracker_->init(frame, bbox);
 }
 
+// This functions returns a 3D histogram (the bins are cubes of R,G,B ranges)
+// of a ROI of a frame.
+Mat TrackThread::calcNormalizedHist3d(const Mat& frame, const Rect2d& bbox)
+{
+    // Check that the bbox is not out of the frame
+    if (   segmentOverlap(bbox.x, bbox.x + bbox.width, 0, frame.size[1]) == 0.
+        || segmentOverlap(bbox.y, bbox.y + bbox.height, 0, frame.size[0]) == 0.)
+        return Mat{};
+
+    double x, y, width, height;
+    x = bbox.x < 0 ? 0 : bbox.x;
+    y = bbox.y < 0 ? 0 : bbox.y;
+    width = bbox.x + bbox.width > frame.size[1] ?
+                 frame.size[1] - bbox.x : bbox.width;
+    height = bbox.y + bbox.height > frame.size[0] ?
+                 frame.size[0] - bbox.y : bbox.height;
+
+    Mat roi{frame, Rect2d{x, y, width, height}};
+    // Take channels 0, 1, and 2 from frame
+    const int channels[] = {0, 1, 2};
+    Mat hist;
+    // 3-dimensional bins
+    constexpr int binSide = 8;
+    const int histSizes[] = {binSide, binSide, binSide};
+    int dims = sizeof histSizes/sizeof histSizes[0];
+    // 256/8 = 32 values in each bin
+    float rRange[] = {0, 256};
+    float gRange[] = {0, 256};
+    float bRange[] = {0, 256};
+    const float *ranges[] = {rRange, gRange, bRange};
+
+    // The returned histogram is of CV_32F type
+    calcHist(&roi, 1, channels, Mat{}, hist, dims, histSizes, ranges);
+
+    int numPix = roi.size[0]*roi.size[1];
+    hist /= numPix;
+
+    return hist;
+}
+
 void TrackThread::process(void)
 {
     if (tracking_)
         tracking_ = tracker_->update(frame_, bbox_);
+
+    // Check that we have not skewed too much from the original target by
+    // comparing histograms
+    if (tracking_) {
+        Mat hist = calcNormalizedHist3d(frame_, bbox_);
+        if (hist.size[0] == 0 || hist.size[1] == 0) {
+            BOOST_LOG_TRIVIAL(warning) << "Tracking but no overlap?!";
+            tracking_ = false;
+        } else {
+            Mat equalPer;
+            // Percentage of equal pixels
+            min(firstHist_, hist, equalPer);
+            float simPer = sum(equalPer)[0];
+            if (simPer < min_similarity_hist_g) {
+                BOOST_LOG_TRIVIAL(debug) << "Hist similarity below expected: "
+                                         << simPer;
+                tracking_ = false;
+            }
+        }
+    }
 
     if (!tracking_)
         BOOST_LOG_TRIVIAL(debug) << "Tracking lost";
