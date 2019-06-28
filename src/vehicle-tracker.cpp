@@ -231,6 +231,11 @@ bool squareOverlap(const Rect2d& a, const Rect2d& b)
     return false;
 }
 
+// We might be already tracking some of the detected objects. To avoid
+// duplicated trackers, we look at the overlap between the bounding box of the
+// tracker and the one coming from the detector. If the overlap is bigger than
+// allowed_overlap_g for either of the boxes, we ignore the detction.
+// Otherwise, we create a new tracker for it.
 void mergeTrackedObjects(const Mat& frame,
                          const vector<DetectedObject>& detected,
                          list<TrackedObject>& tracked)
