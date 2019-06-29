@@ -32,10 +32,13 @@ struct DetectedObject {
 };
 
 // Detects vehicles on video frames
-struct VehicleDetector : MonoProcessor<Mat, vector<DetectedObject>> {
+struct VehicleDetector {
     // threshold: [0-1] min confidence to consider something has been detected
     VehicleDetector(double threshold);
-    ~VehicleDetector() { stop(); }
+    ~VehicleDetector() {}
+
+    void transactSafe(const Mat& in, vector<DetectedObject>& out);
+    void process(void);
 
 private:
     ENUM_WITH_STRINGS(ClassLabel,
@@ -51,9 +54,6 @@ private:
     Mat frameBlob_;
     int frameWidth_, frameHeight_;
     vector<DetectedObject> detected_;
-
-    void transactSafe(const Mat& in, vector<DetectedObject>& out);
-    void process(void);
 };
 
 VehicleDetector::VehicleDetector(double threshold) : threshold_(threshold)
@@ -132,9 +132,12 @@ struct TrackingState {
 };
 
 // Detects and tracks vehicles in video data, using a separate thread
-struct TrackThread : MonoProcessor<Mat, TrackingState> {
+struct TrackThread {
     TrackThread(const Mat& frame, const Rect2d& bbox);
-    ~TrackThread(void) { stop(); }
+    ~TrackThread(void) {}
+
+    void transactSafe(const Mat& in, TrackingState& out);
+    void process(void);
 
 private:
     Mat frame_;
@@ -143,8 +146,6 @@ private:
     Ptr<Tracker> tracker_;
     Mat firstHist_;
 
-    void transactSafe(const Mat& in, TrackingState& out);
-    void process(void);
     Mat calcNormalizedHist3d(const Mat& frame, const Rect2d& bbox);
 };
 
@@ -261,9 +262,13 @@ void TrackThread::transactSafe(const Mat& in, TrackingState& out)
     // resize(in, frame_, Size(), 1/scale_f, 1/scale_f);
 }
 
+typedef MonoProcessor<Mat, vector<DetectedObject>,
+                      VehicleDetector> DetectTaskProc;
+typedef MonoProcessor<Mat, TrackingState, TrackThread> TrackerTaskProc;
+
 struct TrackedObject {
     TrackingState state;
-    unique_ptr<TrackThread> tt;
+    unique_ptr<TrackerTaskProc> tt;
 };
 
 // Returns the overlap between two segments, a1a2 and b1b2. It assumes that
@@ -317,7 +322,8 @@ void mergeTrackedObjects(const Mat& frame,
         }
         if (overlaps == false)
             newTracked.push_back(TrackedObject{{detect.bbox, true},
-                        make_unique<TrackThread>(frame, detect.bbox)});
+                        make_unique<TrackerTaskProc>(
+                            TrackThread{frame, detect.bbox})});
     }
 
     tracked.splice(tracked.end(), newTracked);
@@ -326,7 +332,7 @@ void mergeTrackedObjects(const Mat& frame,
 void processStream(VideoCapture& video, int wait_ms)
 {
     static const char *windowTitle = "Tracking";
-    VehicleDetector detect{detect_thresold_g};
+    DetectTaskProc detect{VehicleDetector{detect_thresold_g}};
     list<TrackedObject> tracked;
     Mat in;
     int numFrames = 0, numNotProcDetect = 0, numNotProcTrack = 0;

@@ -10,9 +10,22 @@
 // have time to analyze one frame. Users of the class call the transact() method
 // to both get the result of the latest task and to push the data for the next
 // one.
-template <typename In, typename Out>
+//
+// The template parameters are In, the type for the input to be processed, Out,
+// the type of the results of the processing, and Task, which encodes how the
+// processing is performed.
+//
+// The Task type must implement the following methods:
+// 1. void transactSafe(const In& in, Out& out);
+//    Called from transact() inside mutex context so the child class can safely
+//    perform the transaction
+// 2. void process(void);
+//    Does the processing of one task - called from the MonoProcessor thread
+//    inside mutex context
+template <typename In, typename Out, typename Task>
 struct MonoProcessor {
-    MonoProcessor(void);
+    // We force the task to be moved to the processor object
+    MonoProcessor(Task&& task);
     virtual ~MonoProcessor(void);
 
     // If the thread is busy, it does nothing. Otherwise, it pushes new input
@@ -20,21 +33,8 @@ struct MonoProcessor {
     // true if the transaction has happened, false othewise.
     bool transact(const In& in, Out& out);
 
-protected:
-    // Called from transact() inside mutex context so the child class can safely
-    // perform the transaction
-    virtual void transactSafe(const In& in, Out& out) = 0;
-    // Does the processing of one task - called from the MonoProcessor thread
-    // inside mutex context
-    virtual void process(void) = 0;
-
-    // Make sure to stop the thread from the child destructor, we cannot do
-    // that safely from the parent destructor as at that point the child objects
-    // will have been already destroyed, which is an issue if they were being
-    // used by the thread.
-    void stop(void);
-
 private:
+    Task task_;
     std::mutex dataMtx_;
     std::condition_variable dataCond_;
     bool finish_;
@@ -44,20 +44,16 @@ private:
     void threadMethod(void);
 };
 
-template <typename In, typename Out>
-MonoProcessor<In, Out>::MonoProcessor(void) :
+template <typename In, typename Out, typename Task>
+MonoProcessor<In, Out, Task>::MonoProcessor(Task&& task) :
+    task_{std::move(task)},
     finish_{false},
     processThread_{&MonoProcessor::threadMethod, this}
 {
 }
 
-template <typename In, typename Out>
-MonoProcessor<In, Out>::~MonoProcessor(void)
-{
-}
-
-template <typename In, typename Out>
-void MonoProcessor<In, Out>::stop(void)
+template <typename In, typename Out, typename Task>
+MonoProcessor<In, Out, Task>::~MonoProcessor(void)
 {
     {
         std::unique_lock<std::mutex> lock(dataMtx_);
@@ -68,20 +64,20 @@ void MonoProcessor<In, Out>::stop(void)
     processThread_.join();
 }
 
-template <typename In, typename Out>
-bool MonoProcessor<In, Out>::transact(const In& in, Out& out)
+template <typename In, typename Out, typename Task>
+bool MonoProcessor<In, Out, Task>::transact(const In& in, Out& out)
 {
     std::unique_lock<std::mutex> lock(dataMtx_, std::defer_lock_t());
     if (lock.try_lock()) {
-        transactSafe(in, out);
+        task_.transactSafe(in, out);
         dataCond_.notify_one();
         return true;
     }
     return false;
 }
 
-template <typename In, typename Out>
-void MonoProcessor<In, Out>::threadMethod(void)
+template <typename In, typename Out, typename Task>
+void MonoProcessor<In, Out, Task>::threadMethod(void)
 {
     while (true) {
         std::unique_lock<std::mutex> lock(dataMtx_);
@@ -90,6 +86,6 @@ void MonoProcessor<In, Out>::threadMethod(void)
         if (finish_)
             break;
 
-        process();
+        task_.process();
     }
 }
