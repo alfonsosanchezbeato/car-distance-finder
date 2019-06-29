@@ -177,9 +177,9 @@ TrackThread::TrackThread(const Mat& frame, const Rect2d& bbox) :
 // of a ROI of a frame.
 Mat TrackThread::calcNormalizedHist3d(const Mat& frame, const Rect2d& bbox)
 {
-    // Check that the bbox is not out of the frame
-    if (   segmentOverlap(bbox.x, bbox.x + bbox.width, 0, frame.size[1]) == 0.
-        || segmentOverlap(bbox.y, bbox.y + bbox.height, 0, frame.size[0]) == 0.)
+    // Return empty matrix if the bbox is out of the frame
+    if (   bbox.x > frame.size[1] || bbox.x + bbox.width < 0
+        || bbox.y > frame.size[0] || bbox.y + bbox.height < 0)
         return Mat{};
 
     double x, y, width, height;
