@@ -32,10 +32,10 @@ struct DetectedObject {
 };
 
 // Detects vehicles on video frames
-struct VehicleDetector {
+struct DetectTask {
     // threshold: [0-1] min confidence to consider something has been detected
-    VehicleDetector(double threshold);
-    ~VehicleDetector() {}
+    DetectTask(double threshold);
+    ~DetectTask() {}
 
     void transactSafe(const Mat& in, vector<DetectedObject>& out);
     void process(void);
@@ -56,7 +56,7 @@ private:
     vector<DetectedObject> detected_;
 };
 
-VehicleDetector::VehicleDetector(double threshold) : threshold_(threshold)
+DetectTask::DetectTask(double threshold) : threshold_(threshold)
 {
     string pathData;
     const char *snapDir = getenv("SNAP");
@@ -70,7 +70,7 @@ VehicleDetector::VehicleDetector(double threshold) : threshold_(threshold)
                                  pathData + "MobileNetSSD_deploy.caffemodel");
 }
 
-void VehicleDetector::transactSafe(const Mat& in, vector<DetectedObject>& out)
+void DetectTask::transactSafe(const Mat& in, vector<DetectedObject>& out)
 {
     // We substract 127,5 and apply a scaling factor of 1/127.5 = 0.007843 so
     // the image values are in the [-1,1] range. Also, the image size must be
@@ -85,7 +85,7 @@ void VehicleDetector::transactSafe(const Mat& in, vector<DetectedObject>& out)
     out = detected_;
 }
 
-void VehicleDetector::process(void)
+void DetectTask::process(void)
 {
     net_.setInput(frameBlob_);
 
@@ -131,52 +131,36 @@ struct TrackingState {
     bool tracking{false};
 };
 
-// Detects and tracks vehicles in video data, using a separate thread
-struct TrackThread {
-    TrackThread(const Mat& frame, const Rect2d& bbox);
-    ~TrackThread(void) {}
+// Tracks vehicles in video data. Use with MonoProcessor.
+struct TrackTask {
+    TrackTask(const Mat& frame, const Rect2d& bbox);
+    ~TrackTask(void) {}
 
     void transactSafe(const Mat& in, TrackingState& out);
     void process(void);
 
 private:
-    Mat frame_;
+    Mat frame_, frame0_;
     bool tracking_;
     Rect2d bbox_;
     Ptr<Tracker> tracker_;
     Mat firstHist_;
 
+    void createTracker(void);
     Mat calcNormalizedHist3d(const Mat& frame, const Rect2d& bbox);
 };
 
-TrackThread::TrackThread(const Mat& frame, const Rect2d& bbox) :
+TrackTask::TrackTask(const Mat& frame, const Rect2d& bbox) :
+    frame0_{frame.clone()},
     tracking_{true},
     bbox_{bbox},
     firstHist_{calcNormalizedHist3d(frame, bbox)}
 {
-    // We have different options for the tracker:
-    // TrackerBoosting: slow, does not adapt bounding box
-    // TrackerMIL: slow, does not adapt bounding box
-    // TrackerKCF: does not adapt bounding box
-    // TrackerTLD: jumps between random parts of the image
-    // TrackerMedianFlow: fast, good tracking, adapts box, can lose tracking
-    // TrackerGOTURN: slow, jumps, large caffe model
-    // TrackerMOSSE: fastest, does not adapt bounding box, can lose tracking
-    // TrackerCSRT: a bit slow, best tracking, adapts box
-
-    // At least for KFC, we need to re-create the tracker when
-    // the tracked object changes. It looks like a repeated call
-    // to init does not fully clean the state and the
-    // performance of the tracker is greatly affected.
-    //tracker_ = TrackerMedianFlow::create();
-    //tracker_ = TrackerMOSSE::create();
-    tracker_ = TrackerCSRT::create();
-    tracker_->init(frame, bbox);
 }
 
 // This functions returns a 3D histogram (the bins are cubes of R,G,B ranges)
 // of a ROI of a frame.
-Mat TrackThread::calcNormalizedHist3d(const Mat& frame, const Rect2d& bbox)
+Mat TrackTask::calcNormalizedHist3d(const Mat& frame, const Rect2d& bbox)
 {
     // Return empty matrix if the bbox is out of the frame
     if (   bbox.x > frame.size[1] || bbox.x + bbox.width < 0
@@ -214,8 +198,33 @@ Mat TrackThread::calcNormalizedHist3d(const Mat& frame, const Rect2d& bbox)
     return hist;
 }
 
-void TrackThread::process(void)
+void TrackTask::createTracker(void)
 {
+    // We have different options for the tracker:
+    // TrackerBoosting: slow, does not adapt bounding box
+    // TrackerMIL: slow, does not adapt bounding box
+    // TrackerKCF: does not adapt bounding box
+    // TrackerTLD: jumps between random parts of the image
+    // TrackerMedianFlow: fast, good tracking, adapts box, can lose tracking
+    // TrackerGOTURN: slow, jumps, large caffe model
+    // TrackerMOSSE: fastest, does not adapt bounding box, can lose tracking
+    // TrackerCSRT: a bit slow, best tracking, adapts box
+
+    // At least for KFC, we need to re-create the tracker when
+    // the tracked object changes. It looks like a repeated call
+    // to init does not fully clean the state and the
+    // performance of the tracker is greatly affected.
+    //tracker_ = TrackerMedianFlow::create();
+    //tracker_ = TrackerMOSSE::create();
+    tracker_ = TrackerCSRT::create();
+    tracker_->init(frame0_, bbox_);
+}
+
+void TrackTask::process(void)
+{
+    if (!tracker_)
+        createTracker();
+
     if (tracking_)
         tracking_ = tracker_->update(frame_, bbox_);
 
@@ -243,7 +252,7 @@ void TrackThread::process(void)
         BOOST_LOG_TRIVIAL(debug) << "Tracking lost";
 }
 
-void TrackThread::transactSafe(const Mat& in, TrackingState& out)
+void TrackTask::transactSafe(const Mat& in, TrackingState& out)
 {
     out.tracking = tracking_;
     out.bbox = bbox_;
@@ -263,8 +272,8 @@ void TrackThread::transactSafe(const Mat& in, TrackingState& out)
 }
 
 typedef MonoProcessor<Mat, vector<DetectedObject>,
-                      VehicleDetector> DetectTaskProc;
-typedef MonoProcessor<Mat, TrackingState, TrackThread> TrackerTaskProc;
+                      DetectTask> DetectTaskProc;
+typedef MonoProcessor<Mat, TrackingState, TrackTask> TrackerTaskProc;
 
 struct TrackedObject {
     TrackingState state;
@@ -305,25 +314,37 @@ bool squareOverlap(const Rect2d& a, const Rect2d& b)
 // We might be already tracking some of the detected objects. To avoid
 // duplicated trackers, we look at the overlap between the bounding box of the
 // tracker and the one coming from the detector. If the overlap is bigger than
-// allowed_overlap_g for either of the boxes, we ignore the detction.
-// Otherwise, we create a new tracker for it.
+// allowed_overlap_g for either of the boxes, we replace the older tracker with
+// the new detection, which is considered more accurate.  If there is no
+// overlap, we create a new tracker for it. The replaced trackers are appended
+// to the garbage list.
 void mergeTrackedObjects(const Mat& frame,
                          const vector<DetectedObject>& detected,
-                         list<TrackedObject>& tracked)
+                         list<TrackedObject>& tracked,
+                         list<TrackedObject>& garbage)
 {
     list<TrackedObject> newTracked;
     for (const auto& detect : detected) {
         bool overlaps = false;
-        for (const auto& track : tracked) {
+        for (auto& track : tracked) {
             if (squareOverlap(detect.bbox, track.state.bbox)) {
                 overlaps = true;
+                // We replace the current tracker with a new one that uses the
+                // new bounding box. In principle, this should be more accurate
+                // than latest bbox from the tracker, which might have skewed.
+                BOOST_LOG_TRIVIAL(debug)
+                    << "tracker replaced by newer detection";
+                garbage.push_back(move(track));
+                track = TrackedObject{{detect.bbox, true},
+                                      make_unique<TrackerTaskProc>(
+                                          TrackTask(frame, detect.bbox))};
                 break;
             }
         }
         if (overlaps == false)
             newTracked.push_back(TrackedObject{{detect.bbox, true},
                         make_unique<TrackerTaskProc>(
-                            TrackThread{frame, detect.bbox})});
+                            TrackTask(frame, detect.bbox))});
     }
 
     tracked.splice(tracked.end(), newTracked);
@@ -332,8 +353,8 @@ void mergeTrackedObjects(const Mat& frame,
 void processStream(VideoCapture& video, int wait_ms)
 {
     static const char *windowTitle = "Tracking";
-    DetectTaskProc detect{VehicleDetector{detect_thresold_g}};
-    list<TrackedObject> tracked;
+    DetectTaskProc detect{DetectTask(detect_thresold_g)};
+    list<TrackedObject> tracked, garbage;
     Mat in;
     int numFrames = 0, numNotProcDetect = 0, numNotProcTrack = 0;
 
@@ -353,7 +374,7 @@ void processStream(VideoCapture& video, int wait_ms)
         for (auto& res : detected)
             rectangle(in, res.bbox, Scalar(0, 255, 0), 8, 1);
         if (detected.size() > 0) {
-            mergeTrackedObjects(in, detected, tracked);
+            mergeTrackedObjects(in, detected, tracked, garbage);
         }
 
         for (auto tr = tracked.begin(), trEnd = tracked.end(); tr != trEnd; ) {
@@ -362,8 +383,18 @@ void processStream(VideoCapture& video, int wait_ms)
                 rectangle(in, tr->state.bbox, Scalar(255, 0, 0), 8, 1);
                 ++tr;
             } else {
+                garbage.push_back(move(*tr));
                 tr = tracked.erase(tr);
             }
+        }
+
+        // Now do "garbage collection" of tracks. We do this so we do not get
+        // stuck in the destructor, which needs to take the object lock.
+        for (auto tr = garbage.begin(), trEnd = garbage.end(); tr != trEnd; ) {
+            if (tr->tt->processorIdle())
+                tr = tracked.erase(tr);
+            else
+                ++tr;
         }
 
         imshow(windowTitle, in);

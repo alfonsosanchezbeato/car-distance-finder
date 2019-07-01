@@ -33,6 +33,9 @@ struct MonoProcessor {
     // true if the transaction has happened, false othewise.
     bool transact(const In& in, Out& out);
 
+    // Returns true if the thread is busy, false otherwise
+    bool processorIdle(void);
+
 private:
     Task task_;
     std::mutex dataMtx_;
@@ -88,4 +91,14 @@ void MonoProcessor<In, Out, Task>::threadMethod(void)
 
         task_.process();
     }
+}
+
+template <typename In, typename Out, typename Task>
+bool MonoProcessor<In, Out, Task>::processorIdle(void)
+{
+    std::unique_lock<std::mutex> lock(dataMtx_, std::defer_lock_t());
+    if (lock.try_lock())
+        return true;
+
+    return false;
 }
