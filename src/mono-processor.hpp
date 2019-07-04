@@ -40,7 +40,7 @@ private:
     Task task_;
     std::mutex dataMtx_;
     std::condition_variable dataCond_;
-    bool finish_;
+    bool finish_, wakeThread_;
     // Keep this last as it uses the other members
     std::thread processThread_;
 
@@ -51,6 +51,7 @@ template <typename In, typename Out, typename Task>
 MonoProcessor<In, Out, Task>::MonoProcessor(Task&& task) :
     task_{std::move(task)},
     finish_{false},
+    wakeThread_{false},
     processThread_{&MonoProcessor::threadMethod, this}
 {
 }
@@ -61,6 +62,7 @@ MonoProcessor<In, Out, Task>::~MonoProcessor(void)
     {
         std::unique_lock<std::mutex> lock(dataMtx_);
         finish_ = true;
+        wakeThread_ = true;
         dataCond_.notify_one();
     }
 
@@ -73,6 +75,7 @@ bool MonoProcessor<In, Out, Task>::transact(const In& in, Out& out)
     std::unique_lock<std::mutex> lock(dataMtx_, std::defer_lock_t());
     if (lock.try_lock()) {
         task_.transactSafe(in, out);
+        wakeThread_ = true;
         dataCond_.notify_one();
         return true;
     }
@@ -82,9 +85,10 @@ bool MonoProcessor<In, Out, Task>::transact(const In& in, Out& out)
 template <typename In, typename Out, typename Task>
 void MonoProcessor<In, Out, Task>::threadMethod(void)
 {
+    std::unique_lock<std::mutex> lock(dataMtx_);
     while (true) {
-        std::unique_lock<std::mutex> lock(dataMtx_);
-        dataCond_.wait(lock);
+        dataCond_.wait(lock, [this]{ return wakeThread_; });
+        wakeThread_ = false;
 
         if (finish_)
             break;
