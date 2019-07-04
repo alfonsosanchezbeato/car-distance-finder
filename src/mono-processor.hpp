@@ -60,7 +60,7 @@ template <typename In, typename Out, typename Task>
 MonoProcessor<In, Out, Task>::~MonoProcessor(void)
 {
     {
-        std::unique_lock<std::mutex> lock(dataMtx_);
+        std::lock_guard<std::mutex> lock(dataMtx_);
         finish_ = true;
         wakeThread_ = true;
         dataCond_.notify_one();
