@@ -5,9 +5,6 @@
 #include <memory>
 #include <vector>
 
-#include <boost/log/trivial.hpp>
-#include <boost/log/expressions.hpp>
-
 #include <opencv2/dnn/dnn.hpp>
 #include <opencv2/core/ocl.hpp>
 #include <opencv2/highgui.hpp>
@@ -108,8 +105,8 @@ void DetectTask::process(void)
         if (confidence < threshold_)
             continue;
 
-        BOOST_LOG_TRIVIAL(debug) << "detected " << ClassLabelStr(label)
-                                 << " with confidence " << confidence;
+        LOG(debug) << "detected " << ClassLabelStr(label)
+                   << " with confidence " << confidence;
 
         Rect2d bbox;
         bbox.x = frameWidth_*detections.at<float>(Vec<int, 4>{0, 0, i, 3});
@@ -233,7 +230,7 @@ void TrackTask::process(void)
     if (tracking_) {
         Mat hist = calcNormalizedHist3d(frame_, bbox_);
         if (hist.size[0] == 0 || hist.size[1] == 0) {
-            BOOST_LOG_TRIVIAL(warning) << "Tracking but no overlap?!";
+            LOG(warning) << "Tracking but no overlap?!";
             tracking_ = false;
         } else {
             Mat equalPer;
@@ -241,15 +238,14 @@ void TrackTask::process(void)
             min(firstHist_, hist, equalPer);
             float simPer = sum(equalPer)[0];
             if (simPer < min_similarity_hist_g) {
-                BOOST_LOG_TRIVIAL(debug) << "Hist similarity below expected: "
-                                         << simPer;
+                LOG(debug) << "Hist similarity below expected: " << simPer;
                 tracking_ = false;
             }
         }
     }
 
     if (!tracking_)
-        BOOST_LOG_TRIVIAL(debug) << "Tracking lost";
+        LOG(debug) << "Tracking lost";
 }
 
 void TrackTask::transactSafe(const Mat& in, TrackingState& out)
@@ -332,8 +328,7 @@ void mergeTrackedObjects(const Mat& frame,
                 // We replace the current tracker with a new one that uses the
                 // new bounding box. In principle, this should be more accurate
                 // than latest bbox from the tracker, which might have skewed.
-                BOOST_LOG_TRIVIAL(debug)
-                    << "tracker replaced by newer detection";
+                LOG(debug) << "tracker replaced by newer detection";
                 garbage.push_back(move(track));
                 track = TrackedObject{{detect.bbox, true},
                                       make_unique<TrackerTaskProc>(
@@ -371,8 +366,9 @@ void processStream(VideoCapture& video, int wait_ms)
         vector<DetectedObject> detected;
         if (!detect.transact(in, detected))
             ++numNotProcDetect;
-        for (auto& res : detected)
-            rectangle(in, res.bbox, Scalar(0, 255, 0), 8, 1);
+        TRACE_CODE(debug,
+                   for (auto& res : detected)
+                       rectangle(in, res.bbox, Scalar(0, 255, 0), 8, 1);)
         if (detected.size() > 0) {
             mergeTrackedObjects(in, detected, tracked, garbage);
         }
@@ -404,12 +400,10 @@ void processStream(VideoCapture& video, int wait_ms)
             break;
     }
 
-    BOOST_LOG_TRIVIAL(debug) << "Detection: " << numNotProcDetect << " frames ("
-                             << 100*numNotProcDetect/numFrames
-                             << "%) not processed";
-    BOOST_LOG_TRIVIAL(debug) << "Tracking: " << numNotProcTrack << " frames ("
-                             << 100*numNotProcTrack/numFrames
-                             << "%) not processed";
+    LOG(debug) << "Detection: " << numNotProcDetect << " frames ("
+               << 100*numNotProcDetect/numFrames << "%) not processed";
+    LOG(debug) << "Tracking: " << numNotProcTrack << " frames ("
+               << 100*numNotProcTrack/numFrames << "%) not processed";
 }
 
 int main(int argc, char **argv)
@@ -417,8 +411,7 @@ int main(int argc, char **argv)
     int wait_ms = 1;
 
     // Set logging priority
-    boost::log::core::get()->set_filter(
-        boost::log::trivial::severity >= boost::log::trivial::debug);
+    initLog(boost::log::trivial::debug);
 
     // Read video from either camera of video file
     VideoCapture video;
