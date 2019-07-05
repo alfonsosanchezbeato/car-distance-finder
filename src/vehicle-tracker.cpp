@@ -165,12 +165,22 @@ Mat TrackTask::calcNormalizedHist3d(const Mat& frame, const Rect2d& bbox)
         return Mat{};
 
     double x, y, width, height;
-    x = bbox.x < 0 ? 0 : bbox.x;
-    y = bbox.y < 0 ? 0 : bbox.y;
-    width = bbox.x + bbox.width > frame.size[1] ?
-                 frame.size[1] - bbox.x : bbox.width;
-    height = bbox.y + bbox.height > frame.size[0] ?
-                 frame.size[0] - bbox.y : bbox.height;
+    if (bbox.x < 0) {
+        x = 0;
+        width = bbox.width + bbox.x;
+    } else {
+        x = bbox.x;
+        width = bbox.width;
+    }
+    if (bbox.y < 0) {
+        y = 0;
+        height = bbox.height + bbox.y;
+    } else {
+        y = bbox.y;
+        height = bbox.height;
+    }
+    width = x + width > frame.size[1] ? frame.size[1] - x : width;
+    height = y + height > frame.size[0] ? frame.size[0] - y : height;
 
     Mat roi{frame, Rect2d{x, y, width, height}};
     // Take channels 0, 1, and 2 from frame
