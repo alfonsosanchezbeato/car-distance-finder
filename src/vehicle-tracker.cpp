@@ -15,7 +15,7 @@
 #include "mono-processor.hpp"
 
 static const double detect_thresold_g = 0.5;
-static const double allowed_overlap_g = 0.3;
+static const double allowed_overlap_g = 0.5;
 static const float min_similarity_hist_g = 0.5;
 
 using namespace cv;
@@ -345,6 +345,23 @@ void mergeTrackedObjects(const Mat& frame,
     tracked.splice(tracked.end(), newTracked);
 }
 
+// Occassionally two objects end up overlapping, track only one
+void mergeOverlappingObjects(list<TrackedObject>& tracked,
+                             list<TrackedObject>& garbage)
+{
+    for (auto tr = tracked.begin(), trEnd = tracked.end(); tr != trEnd; ++tr) {
+        for (auto ot = next(tr); ot != trEnd; ) {
+            if (squareOverlap(tr->state.bbox, ot->state.bbox)) {
+                LOG(debug) << "Removing overlapped object";
+                garbage.push_back(move(*ot));
+                ot = tracked.erase(ot);
+            } else {
+                ++ot;
+            }
+        }
+    }
+}
+
 void processStream(VideoCapture& video, int wait_ms)
 {
     static const char *windowTitle = "Tracking";
@@ -369,9 +386,8 @@ void processStream(VideoCapture& video, int wait_ms)
         TRACE_CODE(debug,
                    for (auto& res : detected)
                        rectangle(in, res.bbox, Scalar(0, 255, 0), 8, 1);)
-        if (detected.size() > 0) {
+        if (detected.size() > 0)
             mergeTrackedObjects(in, detected, tracked, garbage);
-        }
 
         for (auto tr = tracked.begin(), trEnd = tracked.end(); tr != trEnd; ) {
             tr->tt->transact(in, tr->state);
@@ -383,6 +399,8 @@ void processStream(VideoCapture& video, int wait_ms)
                 tr = tracked.erase(tr);
             }
         }
+
+        mergeOverlappingObjects(tracked, garbage);
 
         // Now do "garbage collection" of tracks. We do this so we do not get
         // stuck in the destructor, which needs to take the object lock.
