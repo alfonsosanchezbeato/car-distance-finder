@@ -381,7 +381,9 @@ void processStream(VideoCapture& video, int wait_ms)
     int numFrames = 0, numNotProcDetect = 0, numNotProcTrack = 0;
 
     namedWindow(windowTitle, WINDOW_NORMAL);
-    //moveWindow(windowTitle, 0, 0);
+    // To fill the display, uncomment the next two lines. For some weird reason,
+    // resizing to a random size not related to the actual screen resolution is
+    // needed in order to show the window in full screen mode.
     //resizeWindow(windowTitle, 960, 720);
     //setWindowProperty(windowTitle, WND_PROP_FULLSCREEN, WINDOW_FULLSCREEN);
 
