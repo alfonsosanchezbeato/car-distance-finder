@@ -126,6 +126,8 @@ void DetectTask::process(void)
 struct TrackingState {
     Rect2d bbox;
     bool tracking{false};
+    // Distance to the car in meters
+    double distanceMet;
 };
 
 // Tracks vehicles in video data. Use with MonoProcessor.
@@ -140,17 +142,20 @@ private:
     Mat frame_, frame0_;
     bool tracking_;
     Rect2d bbox_;
+    double distanceMet_;
     Ptr<Tracker> tracker_;
     Mat firstHist_;
 
     void createTracker(void);
     Mat calcNormalizedHist3d(const Mat& frame, const Rect2d& bbox);
+    double calcObjectDistance(const Rect2d& bbox);
 };
 
 TrackTask::TrackTask(const Mat& frame, const Rect2d& bbox) :
     frame0_{frame.clone()},
     tracking_{true},
     bbox_{bbox},
+    distanceMet_{calcObjectDistance(bbox)},
     firstHist_{calcNormalizedHist3d(frame, bbox)}
 {
 }
@@ -227,6 +232,16 @@ void TrackTask::createTracker(void)
     tracker_->init(frame0_, bbox_);
 }
 
+double TrackTask::calcObjectDistance(const Rect2d& bbox)
+{
+    // Focal lenght in pixels, vehicle back length in meters
+    static constexpr double focalLength = 300.;
+    static constexpr double vehicleBackLen = 2.;
+
+    // Just do a very rough calculation for the moment
+    return vehicleBackLen*focalLength/bbox.width;
+}
+
 void TrackTask::process(void)
 {
     if (!tracker_)
@@ -254,6 +269,9 @@ void TrackTask::process(void)
         }
     }
 
+    if (tracking_)
+        distanceMet_ = calcObjectDistance(bbox_);
+
     if (!tracking_)
         LOG(debug) << "Tracking lost";
 }
@@ -262,6 +280,7 @@ void TrackTask::transactSafe(const Mat& in, TrackingState& out)
 {
     out.tracking = tracking_;
     out.bbox = bbox_;
+    out.distanceMet = distanceMet_;
     // TODO make this more efficient by scaling
     in.copyTo(frame_);
 
@@ -340,14 +359,14 @@ void mergeTrackedObjects(const Mat& frame,
                 // than latest bbox from the tracker, which might have skewed.
                 LOG(debug) << "tracker replaced by newer detection";
                 garbage.push_back(move(track));
-                track = TrackedObject{{detect.bbox, true},
+                track = TrackedObject{{detect.bbox, true, 0.},
                                       make_unique<TrackerTaskProc>(
                                           TrackTask(frame, detect.bbox))};
                 break;
             }
         }
         if (overlaps == false)
-            newTracked.push_back(TrackedObject{{detect.bbox, true},
+            newTracked.push_back(TrackedObject{{detect.bbox, true, 0.},
                         make_unique<TrackerTaskProc>(
                             TrackTask(frame, detect.bbox))});
     }
@@ -405,6 +424,13 @@ void processStream(VideoCapture& video, int wait_ms)
             tr->tt->transact(in, tr->state);
             if (tr->state.tracking) {
                 rectangle(in, tr->state.bbox, Scalar(255, 0, 0), 8, 1);
+                ostringstream tag;
+                tag.precision(2);
+                tag << tr->state.distanceMet << " m";
+                putText(in, tag.str(),
+                        Point{int(tr->state.bbox.x) - 20,
+                                int(tr->state.bbox.y) - 20},
+                        FONT_HERSHEY_SCRIPT_SIMPLEX, 1., Scalar(255, 0, 0), 3);
                 ++tr;
             } else {
                 garbage.push_back(move(*tr));
