@@ -46,6 +46,7 @@ private:
                       (clPottedplant)(clSheep)(clSofa)
                       (clTrain)(clTvmonitor))
 
+    bool crop_;
     double threshold_;
     dnn::Net net_;
     Mat frameBlob_;
@@ -53,7 +54,7 @@ private:
     vector<DetectedObject> detected_;
 };
 
-DetectTask::DetectTask(double threshold) : threshold_(threshold)
+DetectTask::DetectTask(double threshold) : crop_{false}, threshold_{threshold}
 {
     string pathData;
     const char *snapDir = getenv("SNAP");
@@ -69,15 +70,27 @@ DetectTask::DetectTask(double threshold) : threshold_(threshold)
 
 void DetectTask::transactSafe(const Mat& in, vector<DetectedObject>& out)
 {
+    // We do a sort of alternate multi-scale detection to try to detect sooner
+    // far objects.
+    Mat inFrame;
+    if (crop_) {
+        frameWidth_ = in.size[1]/2;
+        frameHeight_ = in.size[0]/2;
+        inFrame = in(Rect2d(double(frameWidth_/2), double(frameHeight_/2),
+                            double(frameWidth_), double(frameHeight_)));
+    } else {
+        frameWidth_ = in.size[1];
+        frameHeight_ = in.size[0];
+        inFrame = in;
+    }
+
     // We substract 127,5 and apply a scaling factor of 1/127.5 = 0.007843 so
     // the image values are in the [-1,1] range. Also, the image size must be
     // 300x300 (this is a requirement for the method input data). This is needed
     // as the same transformation is applied when training, apparently (see
     // https://github.com/chuanqi305/MobileNet-SSD/blob/master/template/
     // MobileNetSSD_train_template.prototxt).
-    frameBlob_ = dnn::blobFromImage(in, 0.007843, Size{300, 300}, 127.5);
-    frameWidth_ = in.size[1];
-    frameHeight_ = in.size[0];
+    frameBlob_ = dnn::blobFromImage(inFrame, 0.007843, Size{300, 300}, 127.5);
 
     out = detected_;
 }
@@ -108,18 +121,37 @@ void DetectTask::process(void)
         LOG(debug) << "detected " << ClassLabelStr(label)
                    << " with confidence " << confidence;
 
+        float x_dnn = detections.at<float>(Vec<int, 4>{0, 0, i, 3});
+        float y_dnn = detections.at<float>(Vec<int, 4>{0, 0, i, 4});
+        float x_max_dnn = detections.at<float>(Vec<int, 4>{0, 0, i, 5});
+        float y_max_dnn = detections.at<float>(Vec<int, 4>{0, 0, i, 6});
+
+        // If we are cropping, avoid detections too near to the border as we
+        // might crop the vehicle when the frame is displayed.
+        if (crop_) {
+            static constexpr float perInside = 0.05;
+            if (   x_dnn < 0.f + perInside || x_max_dnn > 1.f - perInside
+                || y_dnn < 0.f + perInside || y_max_dnn > 1.f - perInside) {
+                LOG(debug) << "Dropping cropped detection: "
+                           << "too near to the border";
+                continue;
+            }
+        }
+
         Rect2d bbox;
-        bbox.x = frameWidth_*detections.at<float>(Vec<int, 4>{0, 0, i, 3});
-        bbox.y = frameHeight_*detections.at<float>(Vec<int, 4>{0, 0, i, 4});
-        double x_max, y_max;
-        x_max = frameWidth_*detections.at<float>(Vec<int, 4>{0, 0, i, 5});
-        y_max = frameHeight_*detections.at<float>(Vec<int, 4>{0, 0, i, 6});
-        bbox.width = x_max - bbox.x;
-        bbox.height = y_max - bbox.y;
+        bbox.x = frameWidth_*x_dnn;
+        bbox.y = frameHeight_*y_dnn;
+        bbox.width = frameWidth_*x_max_dnn - bbox.x;
+        bbox.height = frameHeight_*y_max_dnn - bbox.y;
+        if (crop_) {
+            bbox.x += double(frameWidth_/2);
+            bbox.y += double(frameHeight_/2);
+        }
 
         detected.push_back(DetectedObject{bbox, ClassLabelStr(label)});
     }
 
+    crop_ = !crop_;
     detected_ = detected;
 }
 
