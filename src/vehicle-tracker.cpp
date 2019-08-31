@@ -1,6 +1,7 @@
 /*
  * Copyright (C) 2019 Alfonso Sanchez-Beato
  */
+#include <chrono>
 #include <list>
 #include <memory>
 #include <vector>
@@ -423,13 +424,14 @@ void mergeOverlappingObjects(list<TrackedObject>& tracked,
     }
 }
 
-void processStream(VideoCapture& video, int wait_ms)
+void processStream(VideoCapture& video, chrono::steady_clock::duration period)
 {
     static const char *windowTitle = "Tracking";
     DetectTaskProc detect{DetectTask(detect_thresold_g)};
     list<TrackedObject> tracked, garbage;
     Mat in;
     int numFrames = 0, numNotProcDetect = 0, numNotProcTrack = 0;
+    chrono::steady_clock::duration waitDur = chrono::seconds(0);
 
     namedWindow(windowTitle, WINDOW_NORMAL);
     // To fill the display, uncomment the next two lines. For some weird reason,
@@ -438,6 +440,7 @@ void processStream(VideoCapture& video, int wait_ms)
     //resizeWindow(windowTitle, 960, 720);
     //setWindowProperty(windowTitle, WND_PROP_FULLSCREEN, WINDOW_FULLSCREEN);
 
+    auto prev = chrono::steady_clock::now();
     while (video.read(in))
     {
         ++numFrames;
@@ -483,8 +486,22 @@ void processStream(VideoCapture& video, int wait_ms)
 
         imshow(windowTitle, in);
 
+        // Sleep for the time left until next frame should be displayed
+        auto now = chrono::steady_clock::now();
+        auto processDur = now - prev - waitDur;
+        // We need waitDur >= 1, that's why we check 'process + 1 > period'
+        waitDur = processDur + chrono::milliseconds(1) > period ?
+            chrono::milliseconds(1) : period - processDur;
+        prev = now;
+        LOG(trace)
+            << chrono::duration_cast<chrono::milliseconds>(period).count()
+            << ' '
+            << chrono::duration_cast<chrono::milliseconds>(processDur).count()
+            << " wait ms: "
+            << chrono::duration_cast<chrono::milliseconds>(waitDur).count();
         // Exit if ESC pressed
-        if (waitKey(wait_ms) == 27)
+        if (waitKey(chrono::duration_cast
+                    <chrono::milliseconds>(waitDur).count()) == 27)
             break;
     }
 
@@ -496,7 +513,7 @@ void processStream(VideoCapture& video, int wait_ms)
 
 int main(int argc, char **argv)
 {
-    int wait_ms = 1;
+    chrono::steady_clock::duration period = chrono::milliseconds(1);
 
     // Set logging priority
     initLog(boost::log::trivial::debug);
@@ -513,7 +530,7 @@ int main(int argc, char **argv)
     } else if (argc == 3 && strcmp(argv[1], "-f") == 0) {
         video.open(argv[2]);
         double fps = video.get(CAP_PROP_FPS);
-        wait_ms = 1000/fps;
+        period = chrono::milliseconds(static_cast<int>(1000/fps));
     } else {
         cout << "Usage: " << argv[0] << " [<dev_number> | -f <video_file>]\n";
         return 1;
@@ -524,6 +541,6 @@ int main(int argc, char **argv)
         return 1;
     }
 
-    processStream(video, wait_ms);
+    processStream(video, period);
     return 0;
 }
