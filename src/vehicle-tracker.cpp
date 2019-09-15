@@ -6,6 +6,8 @@
 #include <memory>
 #include <vector>
 
+#include <boost/program_options.hpp>
+
 #include <opencv2/dnn/dnn.hpp>
 #include <opencv2/core/ocl.hpp>
 #include <opencv2/highgui.hpp>
@@ -21,6 +23,11 @@ static const float min_similarity_hist_g = 0.5;
 
 using namespace cv;
 using namespace std;
+
+namespace po = boost::program_options;
+static constexpr char optHelp[] = "help";
+static constexpr char optDevice[] = "device";
+static constexpr char optVideo[] = "video";
 
 inline double segmentOverlap(double a1, double a2, double b1, double b2);
 
@@ -511,6 +518,42 @@ void processStream(VideoCapture& video, chrono::steady_clock::duration period)
                << 100*numNotProcTrack/numFrames << "%) not processed";
 }
 
+// Check that 'opt1' and 'opt2' are not specified at the same time
+void conflicting_options(const boost::program_options::variables_map& vm,
+                         const char* opt1, const char* opt2)
+{
+    if (vm.count(opt1) && !vm[opt1].defaulted()
+        && vm.count(opt2) && !vm[opt2].defaulted())
+        throw logic_error(string("Conflicting options '")
+                          + opt1 + "' and '" + opt2 + "'.");
+}
+
+boost::program_options::variables_map parseArguments(int argc, char **argv)
+{
+    po::options_description desc("Allowed options");
+    desc.add_options()
+        (optHelp, "produce help message")
+        (optDevice, po::value<int>(),
+         "get input from device number N - N in /dev/videoN")
+        (optVideo, po::value<string>(), "get input from video file");
+    po::variables_map vm;
+    po::store(po::parse_command_line(argc, argv, desc), vm);
+    po::notify(vm);
+
+    if (vm.count(optHelp)) {
+        cout << "Usage: " << argv[0] << " [--" << optHelp << " | --"
+             << optDevice << " <device number> | --" << optVideo
+             << " <video file>]\n";
+        cout << desc << "\n";
+        return vm;
+    }
+
+    // Read video from either camera of video file
+    conflicting_options(vm, optDevice, optVideo);
+
+    return vm;
+}
+
 int main(int argc, char **argv)
 {
     chrono::steady_clock::duration period = chrono::milliseconds(1);
@@ -518,22 +561,27 @@ int main(int argc, char **argv)
     // Set logging priority
     initLog(boost::log::trivial::debug);
 
-    // Read video from either camera of video file
+    // Handle arguments
+    po::variables_map vm;
+    try {
+        vm = parseArguments(argc, argv);
+    } catch(exception& e) {
+        cerr << e.what() << '\n';
+        cerr << "use --" << optHelp << " to see usage\n";
+        return 1;
+    }
+    if (vm.count(optHelp))
+        return 0;
+
     VideoCapture video;
-    if (argc == 1) {
-        video.open(0);
-    } else if (argc == 2) {
-        int videoSrc;
-        istringstream arg1(argv[1]);
-        arg1 >> videoSrc;
-        video.open(videoSrc);
-    } else if (argc == 3 && strcmp(argv[1], "-f") == 0) {
-        video.open(argv[2]);
+    if (vm.count(optDevice)) {
+        video.open(vm[optDevice].as<int>());
+    } else if (vm.count(optVideo)) {
+        video.open(vm[optVideo].as<string>());
         double fps = video.get(CAP_PROP_FPS);
         period = chrono::milliseconds(static_cast<int>(1000/fps));
     } else {
-        cout << "Usage: " << argv[0] << " [<dev_number> | -f <video_file>]\n";
-        return 1;
+        video.open(0);
     }
 
     if (!video.isOpened()) {

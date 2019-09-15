@@ -12,7 +12,7 @@ target_link_libraries(vehicletracker ${OpenCV_LIBS} ${CMAKE_THREAD_LIBS_INIT})
 
 # Needed for boost log lib. Another option would be -DBOOST_LOG_DYN_LINK.
 set(Boost_USE_STATIC_LIBS ON)
-find_package(Boost REQUIRED COMPONENTS log)
+find_package(Boost REQUIRED COMPONENTS log program_options)
 include_directories(${Boost_INCLUDE_DIRS})
 target_link_libraries(vehicletracker ${Boost_LIBRARIES})
 
