@@ -28,6 +28,7 @@ namespace po = boost::program_options;
 static constexpr char optHelp[] = "help";
 static constexpr char optDevice[] = "device";
 static constexpr char optVideo[] = "video";
+static constexpr char optDebug[] = "debug";
 
 inline double segmentOverlap(double a1, double a2, double b1, double b2);
 
@@ -535,7 +536,9 @@ boost::program_options::variables_map parseArguments(int argc, char **argv)
         (optHelp, "produce help message")
         (optDevice, po::value<int>(),
          "get input from device number N - N in /dev/videoN")
-        (optVideo, po::value<string>(), "get input from video file");
+        (optVideo, po::value<string>(), "get input from video file")
+        (optDebug, po::value<string>()->default_value("info"),
+         "set debug level to one of fatal, error, warning, info, debug, trace");
     po::variables_map vm;
     po::store(po::parse_command_line(argc, argv, desc), vm);
     po::notify(vm);
@@ -543,7 +546,7 @@ boost::program_options::variables_map parseArguments(int argc, char **argv)
     if (vm.count(optHelp)) {
         cout << "Usage: " << argv[0] << " [--" << optHelp << " | --"
              << optDevice << " <device number> | --" << optVideo
-             << " <video file>]\n";
+             << " <video file>] [--" << optDebug << " <debug level>]\n";
         cout << desc << "\n";
         return vm;
     }
@@ -558,9 +561,6 @@ int main(int argc, char **argv)
 {
     chrono::steady_clock::duration period = chrono::milliseconds(1);
 
-    // Set logging priority
-    initLog(boost::log::trivial::debug);
-
     // Handle arguments
     po::variables_map vm;
     try {
@@ -572,6 +572,9 @@ int main(int argc, char **argv)
     }
     if (vm.count(optHelp))
         return 0;
+
+    // Set logging priority
+    initLog(vm[optDebug].as<string>());
 
     VideoCapture video;
     if (vm.count(optDevice)) {
