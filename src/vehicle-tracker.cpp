@@ -322,8 +322,7 @@ void TrackTask::process(void)
 
     if (tracking_)
         distanceMet_ = calcObjectDistance(bbox_);
-
-    if (!tracking_)
+    else
         LOG(debug) << "Tracking lost";
 }
 
