@@ -441,6 +441,11 @@ void mergeOverlappingObjects(list<TrackedObject>& tracked,
     }
 }
 
+chrono::steady_clock::rep durationToMs(chrono::steady_clock::duration dur)
+{
+    return chrono::duration_cast<chrono::milliseconds>(dur).count();
+}
+
 void processStream(VideoCapture& video, chrono::steady_clock::duration period)
 {
     static const char *windowTitle = "Tracking";
@@ -510,15 +515,11 @@ void processStream(VideoCapture& video, chrono::steady_clock::duration period)
         waitDur = processDur + chrono::milliseconds(1) > period ?
             chrono::milliseconds(1) : period - processDur;
         prev = now;
-        LOG(trace)
-            << chrono::duration_cast<chrono::milliseconds>(period).count()
-            << ' '
-            << chrono::duration_cast<chrono::milliseconds>(processDur).count()
-            << " wait ms: "
-            << chrono::duration_cast<chrono::milliseconds>(waitDur).count();
+        LOG(trace) << "period: " << durationToMs(period) << "ms, proc time: "
+                   << durationToMs(processDur) << "ms, wait time: "
+                   << durationToMs(waitDur) << "ms";
         // Exit if ESC pressed
-        if (waitKey(chrono::duration_cast
-                    <chrono::milliseconds>(waitDur).count()) == 27)
+        if (waitKey(durationToMs(waitDur)) == 27)
             break;
     }
 
