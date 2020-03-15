@@ -35,12 +35,13 @@ using namespace cv;
 using namespace std;
 
 namespace po = boost::program_options;
+
+typedef chrono::steady_clock Clock;
+
 static constexpr char optHelp[] = "help";
 static constexpr char optDevice[] = "device";
 static constexpr char optVideo[] = "video";
 static constexpr char optDebug[] = "debug";
-
-inline double segmentOverlap(double a1, double a2, double b1, double b2);
 
 struct DetectedObject {
     Rect2d bbox;
@@ -357,7 +358,7 @@ struct TrackedObject {
 
 // Returns the overlap between two segments, a1a2 and b1b2. It assumes that
 // a1 < a2 and b1 < b2.
-inline double segmentOverlap(double a1, double a2, double b1, double b2)
+static inline double segmentOverlap(double a1, double a2, double b1, double b2)
 {
     if (a1 <= b1 && a2 > b1) {
         if (a2 <= b2)
@@ -374,7 +375,7 @@ inline double segmentOverlap(double a1, double a2, double b1, double b2)
     return 0.;
 }
 
-bool squareOverlap(const Rect2d& a, const Rect2d& b)
+static bool squareOverlap(const Rect2d& a, const Rect2d& b)
 {
     double overlap =
         segmentOverlap(a.x, a.x + a.width, b.x, b.x + b.width)*
@@ -393,10 +394,10 @@ bool squareOverlap(const Rect2d& a, const Rect2d& b)
 // the new detection, which is considered more accurate.  If there is no
 // overlap, we create a new tracker for it. The replaced trackers are appended
 // to the garbage list.
-void mergeTrackedObjects(const Mat& frame,
-                         const vector<DetectedObject>& detected,
-                         list<TrackedObject>& tracked,
-                         list<TrackedObject>& garbage)
+static void mergeTrackedObjects(const Mat& frame,
+                                const vector<DetectedObject>& detected,
+                                list<TrackedObject>& tracked,
+                                list<TrackedObject>& garbage)
 {
     list<TrackedObject> newTracked;
     for (const auto& detect : detected) {
@@ -425,8 +426,8 @@ void mergeTrackedObjects(const Mat& frame,
 }
 
 // Occassionally two objects end up overlapping, track only one
-void mergeOverlappingObjects(list<TrackedObject>& tracked,
-                             list<TrackedObject>& garbage)
+static void mergeOverlappingObjects(list<TrackedObject>& tracked,
+                                    list<TrackedObject>& garbage)
 {
     for (auto tr = tracked.begin(), trEnd = tracked.end(); tr != trEnd; ++tr) {
         for (auto ot = next(tr); ot != trEnd; ) {
@@ -441,19 +442,19 @@ void mergeOverlappingObjects(list<TrackedObject>& tracked,
     }
 }
 
-chrono::steady_clock::rep durationToMs(chrono::steady_clock::duration dur)
+static inline Clock::rep durationToMs(Clock::duration dur)
 {
     return chrono::duration_cast<chrono::milliseconds>(dur).count();
 }
 
-void processStream(VideoCapture& video, chrono::steady_clock::duration period)
+static void processStream(VideoCapture& video, Clock::duration period)
 {
     static const char *windowTitle = "Tracking";
     DetectTaskProc detect{DetectTask(detect_thresold_g)};
     list<TrackedObject> tracked, garbage;
     Mat in;
     int numFrames = 0, numNotProcDetect = 0, numNotProcTrack = 0;
-    chrono::steady_clock::duration waitDur = chrono::seconds(0);
+    Clock::duration waitDur = chrono::seconds(0);
 
     namedWindow(windowTitle, WINDOW_NORMAL);
     // To fill the display, uncomment the next two lines. For some weird reason,
@@ -462,7 +463,7 @@ void processStream(VideoCapture& video, chrono::steady_clock::duration period)
     //resizeWindow(windowTitle, 960, 720);
     //setWindowProperty(windowTitle, WND_PROP_FULLSCREEN, WINDOW_FULLSCREEN);
 
-    auto prev = chrono::steady_clock::now();
+    auto prev = Clock::now();
     while (video.read(in))
     {
         ++numFrames;
@@ -509,7 +510,7 @@ void processStream(VideoCapture& video, chrono::steady_clock::duration period)
         imshow(windowTitle, in);
 
         // Sleep for the time left until next frame should be displayed
-        auto now = chrono::steady_clock::now();
+        auto now = Clock::now();
         auto processDur = now - prev - waitDur;
         // We need waitDur >= 1, that's why we check 'process + 1 > period'
         waitDur = processDur + chrono::milliseconds(1) > period ?
@@ -530,8 +531,8 @@ void processStream(VideoCapture& video, chrono::steady_clock::duration period)
 }
 
 // Check that 'opt1' and 'opt2' are not specified at the same time
-void conflicting_options(const boost::program_options::variables_map& vm,
-                         const char* opt1, const char* opt2)
+static void conflicting_options(const po::variables_map& vm,
+                                const char* opt1, const char* opt2)
 {
     if (vm.count(opt1) && !vm[opt1].defaulted()
         && vm.count(opt2) && !vm[opt2].defaulted())
@@ -539,7 +540,7 @@ void conflicting_options(const boost::program_options::variables_map& vm,
                           + opt1 + "' and '" + opt2 + "'.");
 }
 
-boost::program_options::variables_map parseArguments(int argc, char **argv)
+static po::variables_map parseArguments(int argc, char **argv)
 {
     po::options_description desc("Allowed options");
     desc.add_options()
@@ -569,7 +570,7 @@ boost::program_options::variables_map parseArguments(int argc, char **argv)
 
 int main(int argc, char **argv)
 {
-    chrono::steady_clock::duration period = chrono::milliseconds(1);
+    Clock::duration period = chrono::milliseconds(1);
 
     // Handle arguments
     po::variables_map vm;
