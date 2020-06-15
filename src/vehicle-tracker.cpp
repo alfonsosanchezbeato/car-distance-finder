@@ -152,7 +152,7 @@ void DetectTask::process(void)
             static constexpr float perInside = 0.05;
             if (   x_dnn < 0.f + perInside || x_max_dnn > 1.f - perInside
                 || y_dnn < 0.f + perInside || y_max_dnn > 1.f - perInside) {
-                LOG(debug) << "Dropping cropped detection: "
+                LOG(debug) << "dropping cropped detection: "
                            << "too near to the border";
                 continue;
             }
@@ -307,7 +307,7 @@ void TrackTask::process(void)
     if (tracking_) {
         Mat hist = calcNormalizedHist3d(frame_, bbox_);
         if (hist.size[0] == 0 || hist.size[1] == 0) {
-            LOG(warning) << "Tracking but no overlap?!";
+            LOG(warning) << "tracking but no overlap?!";
             tracking_ = false;
         } else {
             Mat equalPer;
@@ -315,7 +315,7 @@ void TrackTask::process(void)
             min(firstHist_, hist, equalPer);
             float simPer = sum(equalPer)[0];
             if (simPer < min_similarity_hist_g) {
-                LOG(debug) << "Hist similarity below expected: " << simPer;
+                LOG(debug) << "hist similarity below expected: " << simPer;
                 tracking_ = false;
             }
         }
@@ -324,7 +324,7 @@ void TrackTask::process(void)
     if (tracking_)
         distanceMet_ = calcObjectDistance(bbox_);
     else
-        LOG(debug) << "Tracking lost";
+        LOG(debug) << "tracking lost";
 }
 
 void TrackTask::transactSafe(const Mat& in, TrackingState& out)
@@ -432,7 +432,7 @@ static void mergeOverlappingObjects(list<TrackedObject>& tracked,
     for (auto tr = tracked.begin(), trEnd = tracked.end(); tr != trEnd; ++tr) {
         for (auto ot = next(tr); ot != trEnd; ) {
             if (squareOverlap(tr->state.bbox, ot->state.bbox)) {
-                LOG(debug) << "Removing overlapped object";
+                LOG(debug) << "removing overlapped object";
                 garbage.push_back(move(*ot));
                 ot = tracked.erase(ot);
             } else {
@@ -464,8 +464,7 @@ static void processStream(VideoCapture& video, Clock::duration period)
     //setWindowProperty(windowTitle, WND_PROP_FULLSCREEN, WINDOW_FULLSCREEN);
 
     auto prev = Clock::now();
-    while (video.read(in))
-    {
+    while (video.read(in)) {
         ++numFrames;
 
         // TODO Continuous detection for the moment
@@ -524,9 +523,9 @@ static void processStream(VideoCapture& video, Clock::duration period)
             break;
     }
 
-    LOG(debug) << "Detection: " << numNotProcDetect << " frames ("
+    LOG(debug) << "detection: " << numNotProcDetect << " frames ("
                << 100*numNotProcDetect/numFrames << "%) not processed";
-    LOG(debug) << "Tracking: " << numNotProcTrack << " frames ("
+    LOG(debug) << "tracking: " << numNotProcTrack << " frames ("
                << 100*numNotProcTrack/numFrames << "%) not processed";
 }
 
