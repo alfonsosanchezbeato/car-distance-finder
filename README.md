@@ -16,7 +16,12 @@ latest available frames and some times older frames are not processed.
 
 ## Compiling
 
-You will need OpenCV and Boost libraries in your system. Build with
+You will need OpenCV and Boost libraries in your system. If on Ubuntu,
+install dependencies with:
+
+    apt install cmake libboost-log-dev libboost-program-options-dev libopencv-dev
+
+Build with
 
     (mkdir build; cd build; cmake ..; make)
 
@@ -29,6 +34,10 @@ To run using a system camera (/dev/video<N>):
 To run on a video (any video format supported by OpenCV should work):
 
     build/src/vehicletracker --video <video_file> 
+
+Press ESC to exit the program while running.
+
+![The tracker, in action](media/run-capture1.png?raw=true)
 
 ## Testing
 
