@@ -31,6 +31,7 @@ apps:
       - camera
       - home
       - opengl
+      - x11
 
 parts:
   opencv:
@@ -184,5 +185,3 @@ parts:
     source: data
     organize:
       model: data/model
-
-
