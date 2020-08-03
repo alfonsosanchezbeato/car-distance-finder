@@ -81,8 +81,8 @@ DetectTask::DetectTask(double threshold) : crop_{false}, threshold_{threshold}
 
     // We make sure things work well if we are in a snap
     if (snapDir)
-        pathData.append(snapDir);
-    pathData.append("./data/model/");
+        pathData.append(snapDir + string{'/'});
+    pathData.append("data/model/");
 
     net_ = dnn::readNetFromCaffe(pathData + "MobileNetSSD_deploy.prototxt",
                                  pathData + "MobileNetSSD_deploy.caffemodel");
