@@ -14,10 +14,26 @@ is used to accomplish this while at the same time trying to be as
 real-time as possible. This means that the trackers are fed with the
 latest available frames and some times older frames are not processed.
 
-## Compiling
+## Installing the snap
 
-You will need OpenCV and Boost libraries in your system. If on Ubuntu,
-install dependencies with:
+On a system with support for snaps, install and connect needed plugs with:
+
+    snap install car-distance-finder
+    snap connect car-distance-finder:camera
+
+You can also build the snap locally:
+
+    snap install --classic snapcraft
+    snapcraft
+
+and install with
+
+    snap install --dangerous car-distance-finder_*.snap
+    snap connect car-distance-finder:camera
+
+For development purposes, you can build using cmake. You will need
+OpenCV and Boost libraries in your system. If on Ubuntu, install
+dependencies with:
 
     apt install cmake libboost-log-dev libboost-program-options-dev libopencv-dev
 
@@ -27,15 +43,20 @@ Build with
 
 ## Running the tracker
 
-To run using a system camera (/dev/video<N>):
+To run using a system camera (`/dev/video<N>`):
 
-    build/src/vehicletracker --device <N>
+    car-distance-finder.vehicletracker --device <N>
 
 To run on a video (any video format supported by OpenCV should work):
 
-    build/src/vehicletracker --video <video_file> 
+    car-distance-finder.vehicletracker --video <video_file>
+
+If you built with cmake, use `build/src/vehicletracker` instead of
+`car-distance-finder.vehicletracker`.
 
 Press ESC to exit the program while running.
+
+The tracker, in action:
 
 ![The tracker, in action](media/run-capture1.png?raw=true)
 
