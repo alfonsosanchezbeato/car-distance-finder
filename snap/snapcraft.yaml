@@ -1,0 +1,188 @@
+name: car-distance-finder
+version: '0.1'
+base: core18
+summary: An example multi-threaded vehicle tracker
+description: |
+  This snap uses a MobileNet SSD network
+  to detect vehicles in a video stream, and then tracks them using the
+  CSRT tracker algorithm implemented on OpenCV. The distance from the
+  camera to the vehicles is then estimated by a simple formula using the
+  bounding box for the vehicle and the camera's focal distance.  The later
+  is hard-coded in the code, so do not expect anything accurate: it is
+  more of an example application.
+
+  The program is able to track multiple vehicles while still running the
+  neural network for detections on the stream. Extensive multi-threading
+  is used to accomplish this while at the same time trying to be as
+  real-time as possible. This means that the trackers are fed with the
+  latest available frames and some times older frames are not processed.
+
+  Sources can be found at
+  https://github.com/alfonsosanchezbeato/car-distance-finder
+grade: stable
+confinement: strict
+
+apps:
+  vehicletracker:
+    command: vehicletracker
+    environment:
+      XWAYLAND_FULLSCREEN_WINDOW_HINT: title="opencv-demo"
+    plugs:
+      - camera
+      - home
+      - opengl
+
+parts:
+  opencv:
+    plugin: cmake
+    source: https://github.com/opencv/opencv.git
+    source-tag: 4.0.1
+    configflags:
+      - -DINSTALL_C_EXAMPLES=OFF
+      - -DINSTALL_PYTHON_EXAMPLES=OFF
+      - -DBUILD_EXAMPLES=OFF
+      - -DBUILD_DOCS=OFF
+      - -DBUILD_PERF_TESTS=OFF
+      - -DBUILD_TESTS=OFF
+      - -DCMAKE_INSTALL_PREFIX=/usr
+      - -DOPENCV_EXTRA_MODULES_PATH=contrib/modules
+    override-build: |
+      rm -rf contrib
+      git clone -b 4.0.1 --depth 1 https://github.com/opencv/opencv_contrib.git \
+          "$SNAPCRAFT_PART_BUILD"/contrib
+      snapcraftctl build
+    build-packages:
+      - libjpeg-dev
+      - libtiff5-dev
+      - libpng-dev
+      - libavcodec-dev
+      - libavformat-dev
+      - libswscale-dev
+      - libv4l-dev
+      - libxvidcore-dev
+      - libx264-dev
+      - libgtk2.0-dev
+      - libgtk-3-dev
+      - libatlas-base-dev
+      - gfortran
+      - python2.7-dev
+      - python3-dev
+    stage-packages:
+      - libatk1.0-0
+      - libatk-bridge2.0-0
+      - libatlas3-base
+      - libatspi2.0-0
+      - libavcodec57
+      - libavformat57
+      - libavutil55
+      - libboost-filesystem1.65.1
+      - libboost-system1.65.1
+      - libcairo2
+      - libcairo-gobject2
+      - libcapnp-0.6.1
+      - libdatrie1
+      - libdc1394-22
+      - libepoxy0
+      - libexif12
+      - libfontconfig1
+      - libgtk-3-0
+      - libgdk-pixbuf2.0-0
+      - libgl1-mesa-dri
+      - libgme0
+      - libgomp1
+      - libgphoto2-6
+      - libgphoto2-port12
+      - libgraphite2-3
+      - libgsm1
+      - libharfbuzz0b
+      - libicu60
+      - libilmbase12
+      - libjbig0
+      - libjpeg-turbo8
+      - libltdl7
+      - libmirclient9
+      - libmircommon7
+      - libmircore1
+      - libmirprotobuf3
+      - libmodplug1
+      - libmp3lame0
+      - libogg0
+      - libopencore-amrnb0
+      - libopencore-amrwb0
+      - libopenexr22
+      - libopus0
+      - liborc-0.4-0
+      - libpango-1.0-0
+      - libpangocairo-1.0-0
+      - libpangoft2-1.0-0
+      - libpixman-1-0
+      - libprotobuf-lite10
+      - libpython2.7
+      - libpython3.7
+      - libraw1394-11
+      - librtmp1
+      - libshine3
+      - libsnappy1v5
+      - libsoxr0
+      - libspeex1
+      - libssh-gcrypt-4
+      - libswresample2
+      - libswscale4
+      - libthai0
+      - libtheora0
+      - libtiff5
+      - libtwolame0
+      - libusb-1.0-0
+      - libv4l-0
+      - libv4lconvert0
+      - libva2
+      - libvo-aacenc0
+      - libvo-amrwbenc0
+      - libvorbis0a
+      - libvorbisenc2
+      - libwavpack1
+      - libwayland-client0
+      - libwayland-cursor0
+      - libwayland-egl1-mesa
+      - libwebp6
+      - libx11-6
+      - libx264-152
+      - libx265-146
+      - libxau6
+      - libxcb1
+      - libxcb-render0
+      - libxcb-shm0
+      - libxcomposite1
+      - libxcursor1
+      - libxdamage1
+      - libxdmcp6
+      - libxext6
+      - libxfixes3
+      - libxi6
+      - libxinerama1
+      - libxkbcommon0
+      - libxml2
+      - libxrandr2
+      - libxrender1
+      - libxvidcore4
+      - libzvbi0
+      - python-numpy
+      - to amd64: [ "libcrystalhd3:amd64", "libnuma1:amd64" ]
+      - to i386: [ "libcrystalhd3:i386", "libnuma1:i386" ]
+
+  vehicletracker:
+    after: [ opencv ]
+    plugin: cmake
+    source: .
+    build-packages:
+      - libc6-dev
+      - libboost-log-dev
+      - libboost-program-options-dev
+
+  data:
+    plugin: dump
+    source: data
+    organize:
+      model: data/model
+
+
